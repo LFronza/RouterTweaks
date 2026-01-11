@@ -1,8 +1,10 @@
 (()=>{
 
-  if (window.RouterTweaks && window.RouterTweaks.__F670L_OLD_RUNNING) return;
   window.RouterTweaks = window.RouterTweaks || {};
-  window.RouterTweaks.__F670L_OLD_RUNNING = true;
+
+  const RUN_ID = Date.now() + "_" + Math.random().toString(16).slice(2);
+  window.RouterTweaks.__F670L_OLD_RUN_ID = RUN_ID;
+  window.RouterTweaks.__F670L_OLD_ABORT = false;
 
   const norm = s => (s || "").toString().replace(/\s+/g, " ").trim();
   const txt = e => norm(e && ("innerText" in e ? e.innerText : e.textContent));
@@ -34,35 +36,103 @@
   const addDoc = d => {
     if (!d || docs.includes(d)) return;
     docs.push(d);
-    try {
-      [...d.querySelectorAll("iframe,frame")].forEach(f => { try { addDoc(f.contentDocument); } catch(e){} });
-    } catch(e){}
+    try { [...d.querySelectorAll("iframe,frame")].forEach(f => { try { addDoc(f.contentDocument); } catch(e){} }); } catch(e){}
   };
 
   const refreshDocs = () => {
     docs.length = 0;
-    try {
-      if (window.frames && window.frames.mainFrame && window.frames.mainFrame.document) addDoc(window.frames.mainFrame.document);
-    } catch(e){}
+    try { if (window.frames && window.frames.topFrame && window.frames.topFrame.document) addDoc(window.frames.topFrame.document); } catch(e){}
+    try { if (window.frames && window.frames.mainFrame && window.frames.mainFrame.document) addDoc(window.frames.mainFrame.document); } catch(e){}
+    try { if (window.frames && window.frames.leftFrame && window.frames.leftFrame.document) addDoc(window.frames.leftFrame.document); } catch(e){}
     addDoc(document);
   };
 
   const findElById = id => {
-    for (const d of docs) { try { const el = d.getElementById(id); if (el) return el; } catch(e){} }
+    for (const d of docs) {
+      try { const el = d.getElementById(id); if (el) return el; } catch(e){}
+    }
     return null;
   };
 
   const clickById = id => {
     for (const d of docs) {
       try {
-        const el = d.getElementById(id);
-        if (el) { el.click(); return true; }
-        const a = d.querySelector(`#${CSS.escape(id)} a, a#${CSS.escape(id)}`);
+        const esc = CSS.escape(id);
+        const a = d.querySelector(`a#${esc}, #${esc} a, li#${esc} > a, button#${esc}, #${esc} button`);
         if (a) { a.click(); return true; }
+        const el = d.getElementById(id);
+        if (el && el.click) { el.click(); return true; }
       } catch(e){}
     }
     return false;
   };
+
+  const clickByText = rx => {
+    for (const d of docs) {
+      try {
+        const el = [...d.querySelectorAll("a,button,li,span,div")]
+          .find(x => rx.test(txt(x)));
+        if (el) { el.click(); return true; }
+      } catch(e){}
+    }
+    return false;
+  };
+
+  const safeMenuClickByText = (parentRx, childRx) => {
+    refreshDocs();
+
+    if (parentRx) {
+      for (const d of docs) {
+        try {
+          const a = [...d.querySelectorAll("a,li,div,span")].find(x => parentRx.test(txt(x)));
+          if (a) {
+            const t = (a.textContent || "").trim();
+            if (/^\+/.test(t)) a.click();
+          }
+        } catch(e){}
+      }
+    }
+
+    if (clickByText(childRx)) return true;
+
+    for (const d of docs) {
+      try {
+        const a = [...d.querySelectorAll("a,li,div,span")].find(x => childRx.test(txt(x)));
+        if (!a) continue;
+
+        let li = a.closest("li") || (a.parentElement ? a.parentElement.closest("li") : null);
+        if (!li) continue;
+
+        let p = li.parentElement ? li.parentElement.closest("li") : null;
+        let guard = 0;
+        while (p && guard++ < 25) {
+          const pa = p.querySelector(":scope > a");
+          if (pa) {
+            const t = (pa.textContent || "").trim();
+            if (/^\+/.test(t)) pa.click();
+          }
+          p = p.parentElement ? p.parentElement.closest("li") : null;
+        }
+
+        if (a.click) a.click();
+        return true;
+      } catch(e){}
+    }
+
+    return false;
+  };
+
+  const waitFor = (predicate, timeoutMs=8000, intervalMs=200) => new Promise((resolve) => {
+    const start = Date.now();
+    const step = () => {
+      if (window.RouterTweaks.__F670L_OLD_RUN_ID !== RUN_ID || window.RouterTweaks.__F670L_OLD_ABORT) return resolve(false);
+      refreshDocs();
+      try { if (predicate()) return resolve(true); } catch(e){}
+      if (Date.now() - start >= timeoutMs) return resolve(false);
+      setTimeout(step, intervalMs);
+    };
+    setTimeout(step, intervalMs);
+  });
 
   const readPonOld = () => {
     const el = findElById("Fnt_RxPower");
@@ -100,6 +170,7 @@
     for (const d of docs) {
       const t = d.getElementById("Dhcp_Table") || d.querySelector("#Dhcp_Table");
       if (!t) continue;
+
       const rows = [...t.querySelectorAll("tr")];
       if (rows.length < 2) return { byPort: {}, list: [] };
 
@@ -141,9 +212,7 @@
 
   const isLanUp = s => {
     const t=(s||"").toLowerCase();
-    if (!t) return false;
-    if (t.includes("conectar") || t.includes("linkup")) return true;
-    return false;
+    return t.includes("conectar") || t.includes("linkup");
   };
 
   const lanDegraded = (speed, mode, status) => {
@@ -159,7 +228,6 @@
     const flags = [];
     if (data.pon == null) flags.push("PON: não encontrado");
     else if (data.pon > -10 || data.pon < -26) flags.push(`PON fora do intervalo (-26..-10): ${data.pon} dBm`);
-
     if (data.lan) {
       for (const k of Object.keys(data.lan).sort()) {
         const x = data.lan[k];
@@ -279,7 +347,7 @@
         <div style="border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;">
           <div style="font-weight:900;margin-bottom:6px;">LAN (Status + velocidade + duplex + MAC/IP mascarados via DHCP)</div>
           <div style="display:grid;gap:10px;">${lanHtml}</div>
-          <div style="margin-top:6px;font-size:12px;color:#555;">Obs: linkdown/Marque abaixo = sem link (não é problema se não tiver nada conectado).</div>
+          <div style="margin-top:6px;font-size:12px;color:#555;">Obs: linkdown/Marque abaixo = sem link.</div>
         </div>
 
         <div style="border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;">
@@ -304,79 +372,42 @@
   };
 
   const data = { pon:null, lan:null, dhcp:null };
-  let phase=0, tries=0;
 
-  const wait = (ms) => setTimeout(tick, ms);
+  const alive = () => window.RouterTweaks.__F670L_OLD_RUN_ID === RUN_ID && !window.RouterTweaks.__F670L_OLD_ABORT;
 
-  const tick = () => {
-    tries++;
+  (async()=>{
+
     refreshDocs();
 
-    if (phase===0) {
-      clickById("smWanStatu");
-      phase=1; tries=0;
-      return wait(350);
-    }
+    clickById("smWanStatu");
+    await waitFor(()=>!!findElById("ssmLinkState") || !!findElById("Fnt_RxPower"), 8000, 250);
 
-    if (phase===1) {
-      clickById("ssmLinkState");
-      phase=2; tries=0;
-      return wait(500);
-    }
+    clickById("ssmLinkState");
+    await waitFor(()=>!!findElById("Fnt_RxPower"), 8000, 250);
 
-    if (phase===2) {
-      data.pon = readPonOld();
-      if (data.pon!==null || tries>=18) { phase=3; tries=0; }
-      return wait(350);
-    }
+    data.pon = readPonOld();
 
-    if (phase===3) {
-      clickById("smLanStatu");
-      phase=4; tries=0;
-      return wait(350);
-    }
+    clickById("smLanStatu");
+    await new Promise(r=>setTimeout(r, 500));
+    clickById("ssmLAN");
+    await new Promise(r=>setTimeout(r, 600));
+    data.lan = readLanTableOld();
 
-    if (phase===4) {
-      clickById("ssmLAN");
-      phase=5; tries=0;
-      return wait(650);
-    }
+    safeMenuClickByText(null, /^-?\s*Rede$/i);
+    await new Promise(r=>setTimeout(r, 500));
 
-    if (phase===5) {
-      data.lan = readLanTableOld();
-      phase=6; tries=0;
-    }
+    safeMenuClickByText(/^-?\s*Rede$/i, /^-?\s*LAN$/i);
+    await new Promise(r=>setTimeout(r, 500));
 
-    if (phase===6) {
-      clickById("Fnt_mmNet");
-      phase=7; tries=0;
-      return wait(300);
-    }
+    safeMenuClickByText(/^-?\s*LAN$/i, /^Servidor\s+DHCP$/i);
+    await new Promise(r=>setTimeout(r, 800));
 
-    if (phase===7) {
-      clickById("smAddMgr");
-      phase=8; tries=0;
-      return wait(300);
-    }
+    await waitFor(()=>!!findElById("Dhcp_Table"), 9000, 250);
+    data.dhcp = parseDhcpTable();
 
-    if (phase===8) {
-      clickById("ssmDHCPSer");
-      phase=9; tries=0;
-      return wait(700);
-    }
+    if (!alive()) return;
+    modal(data);
 
-    if (phase===9) {
-      data.dhcp = parseDhcpTable();
-      if (data.dhcp || tries>=25) { phase=10; tries=0; }
-      return wait(350);
-    }
-
-    if (phase===10) {
-      modal(data);
-      return;
-    }
-  };
-
-  tick();
+  })();
 
 })();
