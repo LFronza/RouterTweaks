@@ -115,6 +115,22 @@ const clickExpandWlanClientsOnce=(()=>{let done=false;return ()=>{
   done=true; el.click(); return true
 }})();
 
+const clickExpandLanDevsOnce=(()=>{let done=false;return ()=>{
+  if(done)return false;
+  const el=findElById('LANDevsBar');
+  if(!el)return false;
+  done=true; el.click(); return true
+}})();
+
+const ssidBand=(essid,alias)=>{
+  const s=(alias||'')+' '+(essid||'');
+  const m=s.match(/(?:\bssid\b\s*|#\s*|_|\-|\s)([1-6])\b/i)||s.match(/\b([1-6])\b/);
+  const n=m?parseInt(m[1],10):null;
+  if(n>=1&&n<=3)return '2.4G';
+  if(n>=4&&n<=6)return '5G';
+  return '';
+};
+
 const readWlanClientsMaskedWithPerMacRssi=()=>{
   const groups={};
   let i=0,miss=0,any=false;
@@ -130,12 +146,12 @@ const readWlanClientsMaskedWithPerMacRssi=()=>{
     any=true; miss=0;
 
     const ssid=essid||'(sem SSID)';
+    const band=ssidBand(essid,alias);
     const rssi=num(rssiS);
     const macM=maskMac(macS);
     const ipM=maskIpLast(ipS);
 
-    if(!groups[ssid])groups[ssid]={count:0,sum:0,min:null,max:null,ips:[],macs:[],macItems:[],ipSet:new Set(),macSet:new Set()};
-
+    if(!groups[ssid])groups[ssid]={ssid,band,count:0,sum:0,min:null,max:null,ips:[],macs:[],macItems:[],ipSet:new Set(),macSet:new Set()};
     groups[ssid].count++;
 
     if(ipM && !groups[ssid].ipSet.has(ipM)){
@@ -161,21 +177,53 @@ const readWlanClientsMaskedWithPerMacRssi=()=>{
       groups[ssid].max=groups[ssid].max===null?rssi:Math.max(groups[ssid].max,rssi);
     }
 
+    if(!groups[ssid].band && band)groups[ssid].band=band;
+
     i++
   }
 
   if(!any)return null;
 
-  return Object.entries(groups).map(([ssid,g])=>({
-    ssid,
+  return Object.values(groups).map(g=>({
+    ssid:g.ssid,
+    band:g.band||'',
     count:g.count,
     min:g.min===null?null:Math.round(g.min*10)/10,
     max:g.max===null?null:Math.round(g.max*10)/10,
     avg:g.min===null?null:Math.round((g.sum/g.count)*10)/10,
     ips:g.ips||[],
     macs:g.macs||[],
-    macItems:(g.macItems||[]).slice(0,64)
+    macItems:(g.macItems||[]).slice(0,256)
   })).sort((a,b)=>b.count-a.count)
+};
+
+const readLanDevsMacsByPort=()=>{
+  const out={}; // LAN1..LAN4 -> [{mac}]
+  let i=0,miss=0,any=false;
+  for(;;){
+    const alias=getVal('AliasName:LANDevs',i);
+    const macS=getVal('MACAddress:LANDevs',i);
+    if(!alias&&!macS){miss++; if(miss>=2)break; i++; continue}
+    any=true; miss=0;
+
+    const a=(alias||'').toUpperCase();
+    const mPort=a.match(/\bLAN\s*([1-4])\b/);
+    const port=mPort?`LAN${mPort[1]}`:null;
+
+    const macM=maskMac(macS);
+    if(port && macM){
+      out[port]=out[port]||{set:new Set(),list:[]};
+      if(!out[port].set.has(macM)){
+        out[port].set.add(macM);
+        out[port].list.push(macM);
+      }
+    }
+    i++
+  }
+  if(!any)return null;
+  const fin={};
+  for(const k of Object.keys(out))fin[k]=out[k].list;
+  return Object.keys(fin).length?fin:null
 };
 
 const mkFlags=(data)=>{
@@ -205,13 +253,14 @@ const modal=(data)=>{
   const badPon=data.pon!==null&&(data.pon>-10||data.pon<-26);
   const wlanSafe=Array.isArray(data.wlan)?data.wlan:[];
   const lanState=data.lanState||null;
+  const lanDevs=data.lanDevs||null;
 
   const report=[
     `Sinal PON: ${data.pon===null?'N/A':data.pon+' dBm'}`,
     '',
-    ...(lanState?Object.entries(lanState).sort().map(([k,v])=>`${k}: ${v}`):['LAN (Estado): N/A']),
+    ...(lanState?Object.entries(lanState).sort().map(([k,v])=>`${k}: ${v}${(lanDevs&&lanDevs[k]&&lanDevs[k].length)?` | MACs ${lanDevs[k].join(', ')}`:''}`):['LAN (Estado): N/A']),
     '',
-    ...(wlanSafe.length?wlanSafe.map(x=>`SSID ${x.ssid}: ${x.count} disp, RSSI ${x.min}..${x.max}${(x.ips&&x.ips.length)?`, IPs ${safeJoin(x.ips)}`:''}${(x.macs&&x.macs.length)?`, MACs ${safeJoin(x.macs)}`:''}`):['WLAN do cliente: N/A']),
+    ...(wlanSafe.length?wlanSafe.map(x=>`SSID ${x.ssid}${x.band?` (${x.band})`:''}: ${x.count} disp, RSSI ${x.min}..${x.max}${(x.ips&&x.ips.length)?`, IPs ${safeJoin(x.ips)}`:''}${(x.macs&&x.macs.length)?`, MACs ${safeJoin(x.macs)}`:''}`):['WLAN do cliente: N/A']),
     '',
     ...(data.lanClients?data.lanClients.map(x=>`${x.port}: ${x.count} disp`):['LAN do cliente: N/A'])
   ].join('\n');
@@ -219,6 +268,18 @@ const modal=(data)=>{
   const w=document.createElement('div');
   w.id=id;
   w.style.cssText='position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;';
+
+  const lanHtml=(lanState?Object.entries(lanState).sort().map(([k,v])=>{
+    const macs=(lanDevs&&lanDevs[k])?lanDevs[k]:[];
+    return `
+      <div style="border:1px solid #f1f1f1;border-radius:10px;padding:10px;">
+        <div style="display:flex;justify-content:space-between;gap:12px">
+          <span style="font-weight:900">${k}</span>
+          <span style="color:${lanBad(v)?'#b91c1c':'#111'}">${v}</span>
+        </div>
+        ${macs.length?`<div style="margin-top:6px;font-size:12px;color:#444;display:grid;gap:3px">${macs.slice(0,24).map(m=>`<div>${m}</div>`).join('')}${macs.length>24?`<div style="color:#666">+${macs.length-24} MACs…</div>`:''}</div>`:''}
+      </div>`;
+  }).join(''):'<span style="color:#666">não encontrado</span>');
 
   const wlanHtml=wlanSafe.length?wlanSafe.map(x=>{
     const macList=(x.macItems||[]).length?`
@@ -229,7 +290,7 @@ const modal=(data)=>{
     return `
       <div style="border:1px solid #f1f1f1;border-radius:10px;padding:10px;">
         <div style="display:flex;justify-content:space-between;gap:12px">
-          <span style="font-weight:900">${x.ssid}</span>
+          <span style="font-weight:900">${x.ssid}${x.band?` <span style="font-weight:700;color:#555">(${x.band})</span>`:''}</span>
           <span>${x.count} disp • RSSI ${x.min??'N/A'}..${x.max??'N/A'}</span>
         </div>
         ${macList}
@@ -237,7 +298,7 @@ const modal=(data)=>{
   }).join(''):'<span style="color:#666">não encontrado</span>';
 
   w.innerHTML=`
-  <div style="width:min(860px,94vw);max-height:88vh;overflow:auto;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:14px;">
+  <div style="width:min(900px,94vw);max-height:88vh;overflow:auto;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:14px;">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;">
       <div style="font-weight:900;font-size:16px;">Resumo para o chamado</div>
       <button id="__tweak_close__" style="padding:6px 10px;border:1px solid #ddd;border-radius:10px;background:#fff;cursor:pointer;">Fechar</button>
@@ -256,10 +317,8 @@ const modal=(data)=>{
     </div>
 
     <div style="border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;">
-      <div style="font-weight:900;margin-bottom:6px;">LAN (Estado)</div>
-      <div style="display:grid;gap:4px;">
-        ${(lanState?Object.entries(lanState).sort().map(([k,v])=>`<div style="display:flex;justify-content:space-between;gap:12px"><b>${k}</b><span style="color:${lanBad(v)?'#b91c1c':'#111'}">${v}</span></div>`):['<span style="color:#666">não encontrado</span>']).join('')}
-      </div>
+      <div style="font-weight:900;margin-bottom:6px;">LAN (Estado + MACs)</div>
+      <div style="display:grid;gap:10px;">${lanHtml}</div>
       <div style="margin-top:6px;font-size:12px;color:#555;">Obs: “Sem link” não é problema.</div>
     </div>
 
@@ -289,9 +348,9 @@ const modal=(data)=>{
   };
 };
 
-const data={pon:null,lanState:null,wlan:null,lanClients:null};
+const data={pon:null,lanState:null,wlan:null,lanClients:null,lanDevs:null};
 let phase=0,tries=0;
-let clickedLanClient=false,clickedWlanHeader=false;
+let clickedLanClient=false,clickedWlanHeader=false,clickedLanDevs=false;
 
 const delay=ms=>setTimeout(tick,ms);
 
@@ -338,6 +397,12 @@ const tick=()=>{
   }
 
   if(phase===6){
+    if(!clickedLanDevs){clickedLanDevs=true;clickExpandLanDevsOnce();return delay(450)}
+    data.lanDevs=readLanDevsMacsByPort();
+    phase=7;tries=0
+  }
+
+  if(phase===7){
     clickById('mgrAndDiag')||clickByText(/^Gerência\s*&\s*Diagnóstico$/i);
     modal(data);
     return
