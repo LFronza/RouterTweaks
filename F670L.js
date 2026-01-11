@@ -139,7 +139,7 @@ const readWlanClientsMaskedWithPerMacRssi=()=>{
 };
 
 const readLanDevsMacsByPort=()=>{
-  const out={}; // LAN1..LAN4 -> {set,list}
+  const out={};
   let i=0,miss=0,any=false;
   for(;;){
     const alias=getVal('AliasName:LANDevs',i);
@@ -167,10 +167,33 @@ const readLanDevsMacsByPort=()=>{
   return Object.keys(fin).length?fin:null
 };
 
+const readPoweronTime=()=>{
+  const el=findElById('PoweronTime');
+  if(!el)return null;
+  return norm(el.getAttribute('title')||txt(el))
+};
+
+const parseUptimeSeconds=(s)=>{
+  s=(s||'').toLowerCase();
+  if(!s)return null;
+  const pick=(rx)=>{const m=s.match(rx);return m?parseInt(m[1],10):0};
+  const d=pick(/(\d+)\s*dia/);
+  const h=pick(/(\d+)\s*hora/);
+  const m=pick(/(\d+)\s*min/); // pega minuto/miuto
+  const sec=pick(/(\d+)\s*seg/);
+  const total=d*86400+h*3600+m*60+sec;
+  return isFinite(total)&&total>=0?total:null
+};
+
 const mkFlags=(data)=>{
   const flags=[];
   if(data.pon==null)flags.push('PON: não encontrado');
   else if(data.pon>-10||data.pon<-26)flags.push(`PON fora do intervalo (-26..-10): ${data.pon} dBm`);
+
+  if(data.uptimeText){
+    const up=parseUptimeSeconds(data.uptimeText);
+    if(up!==null && up>30*86400) flags.push(`Uptime alto (>30 dias): ${data.uptimeText}`);
+  }
 
   if(data.lanState){
     for(const [p,s] of Object.entries(data.lanState)){
@@ -195,6 +218,21 @@ const mkFlags=(data)=>{
   return flags
 };
 
+const copyToClipboard=(text)=>{
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=text;
+    ta.setAttribute('readonly','');
+    ta.style.cssText='position:fixed;left:-9999px;top:-9999px;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0,ta.value.length);
+    const ok=document.execCommand && document.execCommand('copy');
+    document.body.removeChild(ta);
+    return !!ok;
+  }catch(e){return false}
+};
+
 const modal=(data)=>{
   const id='__tweak_diag_modal__';
   document.getElementById(id)?.remove();
@@ -207,6 +245,7 @@ const modal=(data)=>{
 
   const report=[
     `Sinal PON: ${data.pon===null?'N/A':data.pon+' dBm'}`,
+    data.uptimeText?`Uptime: ${data.uptimeText}`:'Uptime: N/A',
     '',
     ...(lanState?Object.entries(lanState).sort().map(([k,v])=>`${k}: ${v}`):['LAN (Estado): N/A']),
     '',
@@ -245,12 +284,6 @@ const modal=(data)=>{
       </div>`;
   }).join(''):'<span style="color:#666">não encontrado</span>';
 
-  const flagsHtml=flags.length?`
-    <div style="border:1px solid #fecaca;background:#fff5f5;border-radius:12px;padding:10px;margin-bottom:10px;">
-      <div style="font-weight:900;color:#b91c1c;margin-bottom:6px;">Pontos de atenção</div>
-      <div style="color:#7f1d1d;display:grid;gap:4px;">${flags.map(f=>`<div>• ${f}</div>`).join('')}</div>
-    </div>`:'';
-
   w.innerHTML=`
   <div style="width:min(900px,94vw);max-height:88vh;overflow:auto;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:14px;">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;">
@@ -258,11 +291,17 @@ const modal=(data)=>{
       <button id="__tweak_close__" style="padding:6px 10px;border:1px solid #ddd;border-radius:10px;background:#fff;cursor:pointer;">Fechar</button>
     </div>
 
-    ${flagsHtml}
+    ${flags.length?`
+      <div style="border:1px solid #fecaca;background:#fff5f5;border-radius:12px;padding:10px;margin-bottom:10px;">
+        <div style="font-weight:900;color:#b91c1c;margin-bottom:6px;">Pontos de atenção</div>
+        <div style="color:#7f1d1d;display:grid;gap:4px;">${flags.map(f=>`<div>• ${f}</div>`).join('')}</div>
+      </div>
+    `:''}
 
     <div style="border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;">
       <div style="font-weight:900;margin-bottom:4px;">Leitura PON</div>
       <div><span style="font-weight:900;">Sinal PON</span>: ${data.pon===null?'<span style="color:#666">não encontrado</span>':`<b style="color:${badPon?'#d11':'#111'}">${data.pon} dBm</b>`}${badPon?`<div style="font-size:12px;color:#b91c1c;margin-top:4px;">Fora do intervalo (-26 a -10 dBm)</div>`:''}</div>
+      <div style="margin-top:6px;font-size:12px;color:#555;"><b>Uptime:</b> ${data.uptimeText||'não encontrado'}</div>
     </div>
 
     <div style="border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;">
@@ -285,18 +324,15 @@ const modal=(data)=>{
   document.getElementById('__tweak_close__').onclick=()=>w.remove();
   w.addEventListener('click',e=>{if(e.target===w)w.remove();});
 
-  document.getElementById('__tweak_copy__').onclick=async()=>{
-    try{
-      await navigator.clipboard.writeText(report);
-    }catch(e){
-      alert('Falha ao copiar para a área de transferência.');
-    }
+  document.getElementById('__tweak_copy__').onclick=()=>{
+    const ok=copyToClipboard(report);
+    if(!ok) alert('Não foi possível copiar para a área de transferência.');
   };
 };
 
-const data={pon:null,lanState:null,wlan:null,lanDevs:null};
+const data={pon:null,lanState:null,wlan:null,lanDevs:null,uptimeText:null};
 let phase=0,tries=0;
-let clickedWlanHeader=false,clickedLanDevs=false;
+let clickedWlanHeader=false,clickedLanDevs=false,clickedMgr=false;
 
 const delay=ms=>setTimeout(tick,ms);
 
@@ -342,7 +378,12 @@ const tick=()=>{
   }
 
   if(phase===6){
-    clickById('mgrAndDiag')||clickByText(/^Gerência\s*&\s*Diagnóstico$/i);
+    if(!clickedMgr){clickedMgr=true;clickById('mgrAndDiag')||clickByText(/^Gerência\s*&\s*Diagnóstico$/i);return delay(650)}
+    data.uptimeText=readPoweronTime();
+    phase=7;tries=0
+  }
+
+  if(phase===7){
     modal(data);
     return
   }
