@@ -34,103 +34,34 @@
   const addDoc = d => {
     if (!d || docs.includes(d)) return;
     docs.push(d);
-    try { [...d.querySelectorAll("iframe,frame")].forEach(f => { try { addDoc(f.contentDocument); } catch(e){} }); } catch(e){}
+    try {
+      [...d.querySelectorAll("iframe,frame")].forEach(f => { try { addDoc(f.contentDocument); } catch(e){} });
+    } catch(e){}
   };
 
   const refreshDocs = () => {
     docs.length = 0;
-    try { if (window.frames && window.frames.mainFrame && window.frames.mainFrame.document) addDoc(window.frames.mainFrame.document); } catch(e){}
+    try {
+      if (window.frames && window.frames.mainFrame && window.frames.mainFrame.document) addDoc(window.frames.mainFrame.document);
+    } catch(e){}
     addDoc(document);
   };
 
-  const isVisible = el => {
-    try {
-      if (!el) return false;
-      if (el.hidden) return false;
-      const st = el.ownerDocument.defaultView.getComputedStyle(el);
-      if (st.display === "none" || st.visibility === "hidden" || +st.opacity === 0) return false;
-      const r = el.getBoundingClientRect();
-      if (!r || r.width < 2 || r.height < 2) return false;
-      return true;
-    } catch(e){ return false; }
-  };
-
-  const findClickableById = (d, id) => {
-    const esc = CSS.escape(id);
-    const cand = [
-      ...d.querySelectorAll(`a#${esc}, #${esc} a, button#${esc}, #${esc} button, li#${esc} > a, li#${esc}`)
-    ].filter(isVisible);
-    if (cand.length) return cand[0];
-
-    const el = d.getElementById(id);
-    if (el && isVisible(el) && /^(A|BUTTON|LI|DIV|SPAN)$/.test(el.tagName)) return el;
-
+  const findElById = id => {
+    for (const d of docs) { try { const el = d.getElementById(id); if (el) return el; } catch(e){} }
     return null;
   };
 
   const clickById = id => {
     for (const d of docs) {
       try {
-        const el = findClickableById(d, id);
+        const el = d.getElementById(id);
         if (el) { el.click(); return true; }
+        const a = d.querySelector(`#${CSS.escape(id)} a, a#${CSS.escape(id)}`);
+        if (a) { a.click(); return true; }
       } catch(e){}
     }
     return false;
-  };
-
-  const clickByText = rx => {
-    for (const d of docs) {
-      try {
-        const el = [...d.querySelectorAll("a,button,li,span,div,h1,h2,h3")]
-          .find(x => isVisible(x) && rx.test(txt(x)));
-        if (el) { el.click(); return true; }
-      } catch(e){}
-    }
-    return false;
-  };
-
-  const expandTreeForText = (childTextRx) => {
-    refreshDocs();
-    for (const d of docs) {
-      try {
-        const target = [...d.querySelectorAll("a,li,div,span")]
-          .find(x => isVisible(x) && childTextRx.test(txt(x)));
-        if (!target) continue;
-
-        let li = target.closest("li") || (target.parentElement ? target.parentElement.closest("li") : null);
-        if (!li) return false;
-
-        let p = li.parentElement ? li.parentElement.closest("li") : null;
-        let guard = 0;
-
-        while (p && guard++ < 25) {
-          const a = p.querySelector(":scope > a");
-          if (a) {
-            const t = (a.textContent || "").trim();
-            if (/^\+/.test(t)) a.click();
-          }
-          p = p.parentElement ? p.parentElement.closest("li") : null;
-        }
-        return true;
-      } catch(e){}
-    }
-    return false;
-  };
-
-  const safeClickMenu = id => {
-    if (clickById(id)) return true;
-    return false;
-  };
-
-  const safeClickMenuByText = (rx) => {
-    if (clickByText(rx)) return true;
-    expandTreeForText(rx);
-    return clickByText(rx);
-  };
-
-  const findElById = id => {
-    for (const d of docs) { try { const el = d.getElementById(id); if (el) return el; } catch(e){} }
-    return null;
   };
 
   const readPonOld = () => {
@@ -169,7 +100,6 @@
     for (const d of docs) {
       const t = d.getElementById("Dhcp_Table") || d.querySelector("#Dhcp_Table");
       if (!t) continue;
-
       const rows = [...t.querySelectorAll("tr")];
       if (rows.length < 2) return { byPort: {}, list: [] };
 
@@ -211,7 +141,9 @@
 
   const isLanUp = s => {
     const t=(s||"").toLowerCase();
-    return t.includes("conectar") || t.includes("linkup");
+    if (!t) return false;
+    if (t.includes("conectar") || t.includes("linkup")) return true;
+    return false;
   };
 
   const lanDegraded = (speed, mode, status) => {
@@ -227,6 +159,7 @@
     const flags = [];
     if (data.pon == null) flags.push("PON: não encontrado");
     else if (data.pon > -10 || data.pon < -26) flags.push(`PON fora do intervalo (-26..-10): ${data.pon} dBm`);
+
     if (data.lan) {
       for (const k of Object.keys(data.lan).sort()) {
         const x = data.lan[k];
@@ -346,7 +279,7 @@
         <div style="border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;">
           <div style="font-weight:900;margin-bottom:6px;">LAN (Status + velocidade + duplex + MAC/IP mascarados via DHCP)</div>
           <div style="display:grid;gap:10px;">${lanHtml}</div>
-          <div style="margin-top:6px;font-size:12px;color:#555;">Obs: linkdown/Marque abaixo = sem link.</div>
+          <div style="margin-top:6px;font-size:12px;color:#555;">Obs: linkdown/Marque abaixo = sem link (não é problema se não tiver nada conectado).</div>
         </div>
 
         <div style="border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;">
@@ -380,15 +313,15 @@
     refreshDocs();
 
     if (phase===0) {
-      safeClickMenu("smWanStatu");
+      clickById("smWanStatu");
       phase=1; tries=0;
       return wait(350);
     }
 
     if (phase===1) {
-      safeClickMenu("ssmLinkState");
+      clickById("ssmLinkState");
       phase=2; tries=0;
-      return wait(700);
+      return wait(500);
     }
 
     if (phase===2) {
@@ -398,15 +331,15 @@
     }
 
     if (phase===3) {
-      safeClickMenu("smLanStatu");
+      clickById("smLanStatu");
       phase=4; tries=0;
       return wait(350);
     }
 
     if (phase===4) {
-      safeClickMenu("ssmLAN");
+      clickById("ssmLAN");
       phase=5; tries=0;
-      return wait(900);
+      return wait(650);
     }
 
     if (phase===5) {
@@ -415,26 +348,26 @@
     }
 
     if (phase===6) {
-      safeClickMenuByText(/^-?\s*Rede$/i);
+      clickById("Fnt_mmNet");
       phase=7; tries=0;
-      return wait(350);
+      return wait(300);
     }
 
     if (phase===7) {
-      safeClickMenuByText(/^-?\s*LAN$/i);
+      clickById("smAddMgr");
       phase=8; tries=0;
-      return wait(350);
+      return wait(300);
     }
 
     if (phase===8) {
-      safeClickMenuByText(/^Servidor\s+DHCP$/i);
+      clickById("ssmDHCPSer");
       phase=9; tries=0;
-      return wait(1100);
+      return wait(700);
     }
 
     if (phase===9) {
       data.dhcp = parseDhcpTable();
-      if (data.dhcp || tries>=30) { phase=10; tries=0; }
+      if (data.dhcp || tries>=25) { phase=10; tries=0; }
       return wait(350);
     }
 
