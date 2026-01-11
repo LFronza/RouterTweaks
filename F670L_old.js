@@ -1,7 +1,6 @@
 (()=>{
 
   window.RouterTweaks = window.RouterTweaks || {};
-
   const RUN_ID = Date.now() + "_" + Math.random().toString(16).slice(2);
   window.RouterTweaks.__F670L_OLD_RUN_ID = RUN_ID;
   window.RouterTweaks.__F670L_OLD_ABORT = false;
@@ -15,7 +14,6 @@
     const m = (s||"").match(/([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})/);
     return m ? `**:**:**:${m[4].toUpperCase()}:${m[5].toUpperCase()}:${m[6].toUpperCase()}` : null;
   };
-
   const maskIpLast = s => {
     const m = (s||"").match(/\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b/);
     if (!m) return null;
@@ -23,7 +21,6 @@
     if (o.some(x=>x<0||x>255)) return null;
     return `*.*.*.${o[3]}`;
   };
-
   const ssidBand = portStr => {
     const m = (portStr||"").toUpperCase().match(/\bSSID\s*([1-6])\b/);
     const n = m ? parseInt(m[1],10) : null;
@@ -32,6 +29,8 @@
     return "";
   };
 
+  const alive = () => window.RouterTweaks.__F670L_OLD_RUN_ID === RUN_ID && !window.RouterTweaks.__F670L_OLD_ABORT;
+
   const docs = [];
   const addDoc = d => {
     if (!d || docs.includes(d)) return;
@@ -39,18 +38,21 @@
     try { [...d.querySelectorAll("iframe,frame")].forEach(f => { try { addDoc(f.contentDocument); } catch(e){} }); } catch(e){}
   };
 
-  const refreshDocs = () => {
-    docs.length = 0;
-    try { if (window.frames && window.frames.topFrame && window.frames.topFrame.document) addDoc(window.frames.topFrame.document); } catch(e){}
-    try { if (window.frames && window.frames.mainFrame && window.frames.mainFrame.document) addDoc(window.frames.mainFrame.document); } catch(e){}
-    try { if (window.frames && window.frames.leftFrame && window.frames.leftFrame.document) addDoc(window.frames.leftFrame.document); } catch(e){}
-    addDoc(document);
+  const addWindowDocs = (w, depth=0) => {
+    if (!w || depth>6) return;
+    try { if (w.document) addDoc(w.document); } catch(e){}
+    try {
+      const len = w.frames ? w.frames.length : 0;
+      for (let i=0;i<len;i++){
+        try { addWindowDocs(w.frames[i], depth+1); } catch(e){}
+      }
+    } catch(e){}
   };
 
+  const refreshDocs = () => { docs.length = 0; addWindowDocs(window, 0); };
+
   const findElById = id => {
-    for (const d of docs) {
-      try { const el = d.getElementById(id); if (el) return el; } catch(e){}
-    }
+    for (const d of docs) { try { const el=d.getElementById(id); if (el) return el; } catch(e){} }
     return null;
   };
 
@@ -78,9 +80,20 @@
     return false;
   };
 
-  const safeMenuClickByText = (parentRx, childRx) => {
-    refreshDocs();
+  const wait = ms => new Promise(r=>setTimeout(r, ms));
 
+  const waitFor = async (predicate, timeoutMs=9000, intervalMs=200) => {
+    const start = Date.now();
+    while (alive() && (Date.now()-start) < timeoutMs) {
+      refreshDocs();
+      try { if (predicate()) return true; } catch(e){}
+      await wait(intervalMs);
+    }
+    return false;
+  };
+
+  const safeMenuClickByText = async (parentRx, childRx, settleMs=500) => {
+    refreshDocs();
     if (parentRx) {
       for (const d of docs) {
         try {
@@ -91,48 +104,11 @@
           }
         } catch(e){}
       }
+      await wait(120);
     }
-
-    if (clickByText(childRx)) return true;
-
-    for (const d of docs) {
-      try {
-        const a = [...d.querySelectorAll("a,li,div,span")].find(x => childRx.test(txt(x)));
-        if (!a) continue;
-
-        let li = a.closest("li") || (a.parentElement ? a.parentElement.closest("li") : null);
-        if (!li) continue;
-
-        let p = li.parentElement ? li.parentElement.closest("li") : null;
-        let guard = 0;
-        while (p && guard++ < 25) {
-          const pa = p.querySelector(":scope > a");
-          if (pa) {
-            const t = (pa.textContent || "").trim();
-            if (/^\+/.test(t)) pa.click();
-          }
-          p = p.parentElement ? p.parentElement.closest("li") : null;
-        }
-
-        if (a.click) a.click();
-        return true;
-      } catch(e){}
-    }
-
-    return false;
+    clickByText(childRx);
+    await wait(settleMs);
   };
-
-  const waitFor = (predicate, timeoutMs=8000, intervalMs=200) => new Promise((resolve) => {
-    const start = Date.now();
-    const step = () => {
-      if (window.RouterTweaks.__F670L_OLD_RUN_ID !== RUN_ID || window.RouterTweaks.__F670L_OLD_ABORT) return resolve(false);
-      refreshDocs();
-      try { if (predicate()) return resolve(true); } catch(e){}
-      if (Date.now() - start >= timeoutMs) return resolve(false);
-      setTimeout(step, intervalMs);
-    };
-    setTimeout(step, intervalMs);
-  });
 
   const readPonOld = () => {
     const el = findElById("Fnt_RxPower");
@@ -141,26 +117,36 @@
     return validPon(v) ? v : null;
   };
 
+  const hasLanPage = () => {
+    for (const d of docs) {
+      try {
+        const tds=[...d.querySelectorAll("td")].map(x=>txt(x));
+        if (tds.some(x=>/Conex(ão|ao)\s+de\s+Rede/i.test(x)) && tds.some(x=>/^Status$/i.test(x))) return true;
+      } catch(e){}
+    }
+    return false;
+  };
+
   const readLanTableOld = () => {
     const out = {};
     for (const d of docs) {
-      const tables = [...d.querySelectorAll("table.infor, table#TestContent, table")];
+      const tables = [...d.querySelectorAll("table")];
       for (const t of tables) {
         const rows = [...t.querySelectorAll("tr")];
-        let lanName = null, status=null, speed=null, mode=null;
+        let lanName=null,status=null,speed=null,mode=null,seen=false;
         for (const tr of rows) {
-          const tds = [...tr.querySelectorAll("td")];
-          if (tds.length < 2) continue;
-          const k = txt(tds[0]).toLowerCase();
-          const v = txt(tds[1]);
-          if (k.includes("conex") && k.includes("rede")) {
-            const m = v.toUpperCase().match(/\bLAN\s*([1-4])\b/);
-            if (m) lanName = `LAN${m[1]}`;
-          } else if (k === "status") status = v;
-          else if (k.includes("veloc")) speed = v;
-          else if (k.includes("modo")) mode = v;
+          const tds=[...tr.querySelectorAll("td")];
+          if (tds.length<2) continue;
+          const k=txt(tds[0]).toLowerCase();
+          const v=txt(tds[1]);
+          if (/conex/.test(k) && /rede/.test(k)) {
+            const m=v.toUpperCase().match(/\bLAN\s*([1-4])\b/);
+            if (m) { lanName=`LAN${m[1]}`; seen=true; }
+          } else if (k==="status") { status=v; seen=true; }
+          else if (/veloc/.test(k)) { speed=v; seen=true; }
+          else if (/modo/.test(k)) { mode=v; seen=true; }
         }
-        if (lanName) out[lanName] = { status: norm(status), speed: norm(speed), mode: norm(mode) };
+        if (seen && lanName) out[lanName]={ status:norm(status), speed:norm(speed), mode:norm(mode) };
       }
     }
     return Object.keys(out).length ? out : null;
@@ -371,38 +357,46 @@
     };
   };
 
-  const data = { pon:null, lan:null, dhcp:null };
-
-  const alive = () => window.RouterTweaks.__F670L_OLD_RUN_ID === RUN_ID && !window.RouterTweaks.__F670L_OLD_ABORT;
-
   (async()=>{
 
+    const data = { pon:null, lan:null, dhcp:null };
     refreshDocs();
 
     clickById("smWanStatu");
-    await waitFor(()=>!!findElById("ssmLinkState") || !!findElById("Fnt_RxPower"), 8000, 250);
-
+    await wait(500);
     clickById("ssmLinkState");
-    await waitFor(()=>!!findElById("Fnt_RxPower"), 8000, 250);
-
+    await waitFor(()=>!!findElById("Fnt_RxPower"), 9000, 250);
     data.pon = readPonOld();
 
     clickById("smLanStatu");
-    await new Promise(r=>setTimeout(r, 500));
+    await wait(500);
     clickById("ssmLAN");
-    await new Promise(r=>setTimeout(r, 600));
+    await waitFor(()=>hasLanPage(), 9000, 250);
+    refreshDocs();
     data.lan = readLanTableOld();
 
-    safeMenuClickByText(null, /^-?\s*Rede$/i);
-    await new Promise(r=>setTimeout(r, 500));
+    // DHCP: tenta 3 caminhos (porque no OLD varia muito)
+    // A) IDs (quando existem/funcionam)
+    clickById("Fnt_mmNet"); await wait(500);
+    clickById("smAddMgr");  await wait(500);
+    clickById("ssmDHCPSer");await wait(900);
 
-    safeMenuClickByText(/^-?\s*Rede$/i, /^-?\s*LAN$/i);
-    await new Promise(r=>setTimeout(r, 500));
+    // B) Menu "Rede > LAN > Servidor DHCP"
+    if (!findElById("Dhcp_Table")) {
+      await safeMenuClickByText(null, /^-?\s*Rede$/i, 500);
+      await safeMenuClickByText(/^-?\s*Rede$/i, /^-?\s*LAN$/i, 500);
+      await safeMenuClickByText(/^-?\s*LAN$/i, /^Servidor\s+DHCP$/i, 900);
+    }
 
-    safeMenuClickByText(/^-?\s*LAN$/i, /^Servidor\s+DHCP$/i);
-    await new Promise(r=>setTimeout(r, 800));
+    // C) Menu "Interface de rede > LAN > Servidor DHCP" (outro firmware)
+    if (!findElById("Dhcp_Table")) {
+      await safeMenuClickByText(null, /^\+?\-?\s*Interface\s+de\s+rede$/i, 500);
+      await safeMenuClickByText(/^\+?\-?\s*Interface\s+de\s+rede$/i, /^-?\s*LAN$/i, 500);
+      await safeMenuClickByText(/^-?\s*LAN$/i, /^Servidor\s+DHCP$/i, 900);
+    }
 
     await waitFor(()=>!!findElById("Dhcp_Table"), 9000, 250);
+    refreshDocs();
     data.dhcp = parseDhcpTable();
 
     if (!alive()) return;
