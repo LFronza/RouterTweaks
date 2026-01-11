@@ -37,18 +37,14 @@
     docs.push(d);
     try { [...d.querySelectorAll("iframe,frame")].forEach(f => { try { addDoc(f.contentDocument); } catch(e){} }); } catch(e){}
   };
-
   const addWindowDocs = (w, depth=0) => {
-    if (!w || depth>6) return;
+    if (!w || depth>7) return;
     try { if (w.document) addDoc(w.document); } catch(e){}
     try {
       const len = w.frames ? w.frames.length : 0;
-      for (let i=0;i<len;i++){
-        try { addWindowDocs(w.frames[i], depth+1); } catch(e){}
-      }
+      for (let i=0;i<len;i++){ try { addWindowDocs(w.frames[i], depth+1); } catch(e){} }
     } catch(e){}
   };
-
   const refreshDocs = () => { docs.length = 0; addWindowDocs(window, 0); };
 
   const findElById = id => {
@@ -72,7 +68,7 @@
   const clickByText = rx => {
     for (const d of docs) {
       try {
-        const el = [...d.querySelectorAll("a,button,li,span,div")]
+        const el = [...d.querySelectorAll("a,button,li,span,div,td")]
           .find(x => rx.test(txt(x)));
         if (el) { el.click(); return true; }
       } catch(e){}
@@ -92,36 +88,69 @@
     return false;
   };
 
-  const safeMenuClickByText = async (parentRx, childRx, settleMs=500) => {
+  const expandPlusFor = async (rx, settle=120) => {
     refreshDocs();
-    if (parentRx) {
-      for (const d of docs) {
-        try {
-          const a = [...d.querySelectorAll("a,li,div,span")].find(x => parentRx.test(txt(x)));
-          if (a) {
-            const t = (a.textContent || "").trim();
-            if (/^\+/.test(t)) a.click();
-          }
-        } catch(e){}
-      }
-      await wait(120);
+    for (const d of docs) {
+      try {
+        const a = [...d.querySelectorAll("a,li,div,span")]
+          .find(x => rx.test(txt(x)));
+        if (!a) continue;
+        const t = (a.textContent || "").trim();
+        if (/^\+/.test(t)) { a.click(); await wait(settle); return true; }
+      } catch(e){}
     }
+    return false;
+  };
+
+  const clickMenuText = async (parentRx, childRx, settleMs=550) => {
+    if (parentRx) await expandPlusFor(parentRx, 150);
     clickByText(childRx);
     await wait(settleMs);
   };
 
   const readPonOld = () => {
     const el = findElById("Fnt_RxPower");
-    if (!el) return null;
-    const v = num(el.getAttribute("title") || txt(el));
-    return validPon(v) ? v : null;
+    if (el) {
+      const v = num(el.getAttribute("title") || txt(el));
+      if (validPon(v)) return v;
+    }
+
+    for (const d of docs) {
+      try {
+        const tds = [...d.querySelectorAll("td")];
+        for (let i=0;i<tds.length;i++){
+          const k = txt(tds[i]).toLowerCase();
+          if (k.includes("energia") && k.includes("entrada") && k.includes("módulo")) {
+            const v = num(txt(tds[i+1] || ""));
+            if (validPon(v)) return v;
+          }
+          if (k.includes("potência") && k.includes("entrada") && k.includes("óptico")) {
+            const v = num(txt(tds[i+1] || ""));
+            if (validPon(v)) return v;
+          }
+        }
+      } catch(e){}
+    }
+    return null;
+  };
+
+  const hasPonPage = () => {
+    if (findElById("Fnt_RxPower")) return true;
+    for (const d of docs) {
+      try {
+        const t = d.body ? d.body.innerText : "";
+        if (/Informa(ç|c)ão\s+PON/i.test(t) && /(Energia|Pot(ê|e)ncia)\s+de\s+entrada/i.test(t)) return true;
+      } catch(e){}
+    }
+    return false;
   };
 
   const hasLanPage = () => {
     for (const d of docs) {
       try {
-        const tds=[...d.querySelectorAll("td")].map(x=>txt(x));
-        if (tds.some(x=>/Conex(ão|ao)\s+de\s+Rede/i.test(x)) && tds.some(x=>/^Status$/i.test(x))) return true;
+        const t = d.body ? d.body.innerText : "";
+        if (/Interface\s+de\s+usu(á|a)rio.*Ethernet/i.test(t)) return true;
+        if (/Conex(ã|a)o\s+de\s+Rede/i.test(t) && /\bLAN[1-4]\b/i.test(t)) return true;
       } catch(e){}
     }
     return false;
@@ -362,40 +391,32 @@
     const data = { pon:null, lan:null, dhcp:null };
     refreshDocs();
 
-    clickById("smWanStatu");
-    await wait(500);
-    clickById("ssmLinkState");
-    await waitFor(()=>!!findElById("Fnt_RxPower"), 9000, 250);
+    // PON: ir pelo menu (mais confiável nesse firmware)
+    await clickMenuText(null, /^\+?\-?\s*Interface\s+de\s+rede$/i, 550);
+    await clickMenuText(/^\+?\-?\s*Interface\s+de\s+rede$/i, /^Informa(ç|c)ão\s+PON$/i, 750);
+    await waitFor(()=>hasPonPage(), 9000, 250);
     data.pon = readPonOld();
 
-    clickById("smLanStatu");
-    await wait(500);
-    clickById("ssmLAN");
+    // LAN: Interface de usuário > Ethernet
+    await clickMenuText(null, /^\+?\-?\s*Interface\s+de\s+usu(á|a)rio$/i, 550);
+    await clickMenuText(/^\+?\-?\s*Interface\s+de\s+usu(á|a)rio$/i, /^Ethernet$/i, 750);
     await waitFor(()=>hasLanPage(), 9000, 250);
     refreshDocs();
     data.lan = readLanTableOld();
 
-    // DHCP: tenta 3 caminhos (porque no OLD varia muito)
-    // A) IDs (quando existem/funcionam)
-    clickById("Fnt_mmNet"); await wait(500);
-    clickById("smAddMgr");  await wait(500);
-    clickById("ssmDHCPSer");await wait(900);
+    // DHCP: Rede > LAN > Servidor DHCP (ou Interface de rede > LAN > Servidor DHCP)
+    // tenta ambos, e espera a tabela aparecer
+    await clickMenuText(null, /^-?\s*Rede$/i, 550);
+    await clickMenuText(/^-?\s*Rede$/i, /^-?\s*LAN$/i, 550);
+    await clickMenuText(/^-?\s*LAN$/i, /^Servidor\s+DHCP$/i, 850);
 
-    // B) Menu "Rede > LAN > Servidor DHCP"
     if (!findElById("Dhcp_Table")) {
-      await safeMenuClickByText(null, /^-?\s*Rede$/i, 500);
-      await safeMenuClickByText(/^-?\s*Rede$/i, /^-?\s*LAN$/i, 500);
-      await safeMenuClickByText(/^-?\s*LAN$/i, /^Servidor\s+DHCP$/i, 900);
+      await clickMenuText(null, /^\+?\-?\s*Interface\s+de\s+rede$/i, 550);
+      await clickMenuText(/^\+?\-?\s*Interface\s+de\s+rede$/i, /^-?\s*LAN$/i, 550);
+      await clickMenuText(/^-?\s*LAN$/i, /^Servidor\s+DHCP$/i, 850);
     }
 
-    // C) Menu "Interface de rede > LAN > Servidor DHCP" (outro firmware)
-    if (!findElById("Dhcp_Table")) {
-      await safeMenuClickByText(null, /^\+?\-?\s*Interface\s+de\s+rede$/i, 500);
-      await safeMenuClickByText(/^\+?\-?\s*Interface\s+de\s+rede$/i, /^-?\s*LAN$/i, 500);
-      await safeMenuClickByText(/^-?\s*LAN$/i, /^Servidor\s+DHCP$/i, 900);
-    }
-
-    await waitFor(()=>!!findElById("Dhcp_Table"), 9000, 250);
+    await waitFor(()=>!!findElById("Dhcp_Table"), 12000, 250);
     refreshDocs();
     data.dhcp = parseDhcpTable();
 
