@@ -44,43 +44,6 @@ const readLanStatesById=()=>{
   return Object.keys(out).length?out:null
 };
 
-const getSectionRootByHeaderText=(rx)=>{
-  for(const d of docs){
-    const hdr=[...d.querySelectorAll('a,button,div,span,li,h1,h2,h3')].find(x=>rx.test(txt(x)));
-    if(!hdr)continue;
-    let root=hdr.closest('div')||hdr.parentElement||d.body;
-    for(let i=0;i<10&&root&&(!root.querySelector||!root.querySelector('table'));i++)root=root.parentElement;
-    return {d,root:root||d.body}
-  }
-  return null
-};
-
-const tableToRows=(root)=>{
-  const tb=root.querySelector('table'); if(!tb)return [];
-  return [...tb.querySelectorAll('tr')]
-    .map(tr=>[...tr.querySelectorAll('th,td')].map(c=>txt(c)))
-    .filter(r=>r.some(x=>x))
-};
-
-const parseLanClientCounts=(root)=>{
-  const rows=tableToRows(root); if(!rows.length)return null;
-  let start=1;
-  for(let i=0;i<Math.min(rows.length,8);i++){
-    const j=rows[i].join(' ').toLowerCase();
-    if(j.includes('lan')&&(j.includes('mac')||j.includes('ip')||j.includes('porta')||j.includes('port'))){start=i+1;break}
-  }
-  const byPort={};
-  for(let i=start;i<rows.length;i++){
-    const r=rows[i];
-    const pm=(r.join(' ').match(/\bLAN ?[1-4]\b/i)||[])[0];
-    if(!pm)continue;
-    const port=pm.toUpperCase().replace(' ','');
-    byPort[port]=(byPort[port]||0)+1
-  }
-  const out=Object.entries(byPort).filter(([,c])=>c>0).sort().map(([port,count])=>({port,count}));
-  return out.length?out:null
-};
-
 const lanBad=(s)=>{
   const t=(s||'').toLowerCase();
   if(!t||/sem\s*link/.test(t)||/down/.test(t)||/disconnected/.test(t))return false;
@@ -92,14 +55,6 @@ const lanBad=(s)=>{
 const maskMac=s=>{
   const m=(s||'').match(/([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})/);
   return m?`**:**:**:${m[4].toUpperCase()}:${m[5].toUpperCase()}:${m[6].toUpperCase()}`:null
-};
-
-const maskIpLast=s=>{
-  const m=(s||'').match(/\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b/);
-  if(!m)return null;
-  const o=[+m[1],+m[2],+m[3],+m[4]];
-  if(o.some(x=>x<0||x>255))return null;
-  return `*.*.*.${o[3]}`
 };
 
 const getVal=(base,i)=>{
@@ -138,31 +93,19 @@ const readWlanClientsMaskedWithPerMacRssi=()=>{
   for(;;){
     const essid=getVal('ESSID',i);
     const rssiS=getVal('RSSI',i);
-    const ipS=getVal('IPAddress',i);
     const macS=getVal('MACAddress',i);
     const alias=getVal('AliasName',i);
 
-    if(!essid&&!rssiS&&!ipS&&!macS&&!alias){miss++; if(miss>=2)break; i++; continue}
+    if(!essid&&!rssiS&&!macS&&!alias){miss++; if(miss>=2)break; i++; continue}
     any=true; miss=0;
 
     const ssid=essid||'(sem SSID)';
     const band=ssidBand(essid,alias);
     const rssi=num(rssiS);
     const macM=maskMac(macS);
-    const ipM=maskIpLast(ipS);
 
-    if(!groups[ssid])groups[ssid]={ssid,band,count:0,sum:0,min:null,max:null,ips:[],macs:[],macItems:[],ipSet:new Set(),macSet:new Set()};
+    if(!groups[ssid])groups[ssid]={ssid,band,count:0,sum:0,min:null,max:null,macItems:[]};
     groups[ssid].count++;
-
-    if(ipM && !groups[ssid].ipSet.has(ipM)){
-      groups[ssid].ipSet.add(ipM);
-      groups[ssid].ips.push(ipM);
-    }
-
-    if(macM && !groups[ssid].macSet.has(macM)){
-      groups[ssid].macSet.add(macM);
-      groups[ssid].macs.push(macM);
-    }
 
     if(macM){
       groups[ssid].macItems.push({
@@ -191,14 +134,12 @@ const readWlanClientsMaskedWithPerMacRssi=()=>{
     min:g.min===null?null:Math.round(g.min*10)/10,
     max:g.max===null?null:Math.round(g.max*10)/10,
     avg:g.min===null?null:Math.round((g.sum/g.count)*10)/10,
-    ips:g.ips||[],
-    macs:g.macs||[],
     macItems:(g.macItems||[]).slice(0,256)
   })).sort((a,b)=>b.count-a.count)
 };
 
 const readLanDevsMacsByPort=()=>{
-  const out={}; // LAN1..LAN4 -> [{mac}]
+  const out={}; // LAN1..LAN4 -> {set,list}
   let i=0,miss=0,any=false;
   for(;;){
     const alias=getVal('AliasName:LANDevs',i);
@@ -230,20 +171,29 @@ const mkFlags=(data)=>{
   const flags=[];
   if(data.pon==null)flags.push('PON: não encontrado');
   else if(data.pon>-10||data.pon<-26)flags.push(`PON fora do intervalo (-26..-10): ${data.pon} dBm`);
+
   if(data.lanState){
     for(const [p,s] of Object.entries(data.lanState)){
       if(lanBad(s))flags.push(`${p} link degradado: ${s}`);
     }
   }
-  if(data.wlan){
-    for(const x of data.wlan){
-      if(x.min!==null&&x.max!==null&&x.min<-80&&x.max<-80)flags.push(`Wi-Fi ${x.ssid}: RSSI ruim (${x.min}..${x.max})`);
+
+  if(Array.isArray(data.wlan)){
+    const badMacs=[];
+    for(const ss of data.wlan){
+      for(const mi of (ss.macItems||[])){
+        if(mi && mi.rssi!==null && mi.rssi<-70) badMacs.push(`${ss.ssid}${ss.band?`(${ss.band})`:''} ${mi.mac} RSSI ${mi.rssi}`);
+      }
+    }
+    if(badMacs.length){
+      flags.push('Wi-Fi RSSI < -70 (MACs):');
+      badMacs.slice(0,12).forEach(x=>flags.push(x));
+      if(badMacs.length>12)flags.push(`+${badMacs.length-12} MACs...`);
     }
   }
+
   return flags
 };
-
-const safeJoin=v=>Array.isArray(v)?v.filter(Boolean).join(', '):'';
 
 const modal=(data)=>{
   const id='__tweak_diag_modal__';
@@ -258,11 +208,9 @@ const modal=(data)=>{
   const report=[
     `Sinal PON: ${data.pon===null?'N/A':data.pon+' dBm'}`,
     '',
-    ...(lanState?Object.entries(lanState).sort().map(([k,v])=>`${k}: ${v}${(lanDevs&&lanDevs[k]&&lanDevs[k].length)?` | MACs ${lanDevs[k].join(', ')}`:''}`):['LAN (Estado): N/A']),
+    ...(lanState?Object.entries(lanState).sort().map(([k,v])=>`${k}: ${v}`):['LAN (Estado): N/A']),
     '',
-    ...(wlanSafe.length?wlanSafe.map(x=>`SSID ${x.ssid}${x.band?` (${x.band})`:''}: ${x.count} disp, RSSI ${x.min}..${x.max}${(x.ips&&x.ips.length)?`, IPs ${safeJoin(x.ips)}`:''}${(x.macs&&x.macs.length)?`, MACs ${safeJoin(x.macs)}`:''}`):['WLAN do cliente: N/A']),
-    '',
-    ...(data.lanClients?data.lanClients.map(x=>`${x.port}: ${x.count} disp`):['LAN do cliente: N/A'])
+    ...(wlanSafe.length?wlanSafe.map(x=>`SSID ${x.ssid}${x.band?` (${x.band})`:''}: ${x.count} disp, RSSI ${x.min??'N/A'}..${x.max??'N/A'}`):['WLAN do cliente: N/A'])
   ].join('\n');
 
   const w=document.createElement('div');
@@ -297,6 +245,12 @@ const modal=(data)=>{
       </div>`;
   }).join(''):'<span style="color:#666">não encontrado</span>';
 
+  const flagsHtml=flags.length?`
+    <div style="border:1px solid #fecaca;background:#fff5f5;border-radius:12px;padding:10px;margin-bottom:10px;">
+      <div style="font-weight:900;color:#b91c1c;margin-bottom:6px;">Pontos de atenção</div>
+      <div style="color:#7f1d1d;display:grid;gap:4px;">${flags.map(f=>`<div>• ${f}</div>`).join('')}</div>
+    </div>`:'';
+
   w.innerHTML=`
   <div style="width:min(900px,94vw);max-height:88vh;overflow:auto;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:14px;">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;">
@@ -304,12 +258,7 @@ const modal=(data)=>{
       <button id="__tweak_close__" style="padding:6px 10px;border:1px solid #ddd;border-radius:10px;background:#fff;cursor:pointer;">Fechar</button>
     </div>
 
-    ${flags.length?`
-      <div style="border:1px solid #fecaca;background:#fff5f5;border-radius:12px;padding:10px;margin-bottom:10px;">
-        <div style="font-weight:900;color:#b91c1c;margin-bottom:6px;">Pontos de atenção</div>
-        <div style="color:#7f1d1d;display:grid;gap:4px;">${flags.map(f=>`<div>• ${f}</div>`).join('')}</div>
-      </div>
-    `:''}
+    ${flagsHtml}
 
     <div style="border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;">
       <div style="font-weight:900;margin-bottom:4px;">Leitura PON</div>
@@ -327,13 +276,6 @@ const modal=(data)=>{
       <div style="display:grid;gap:10px;">${wlanHtml}</div>
     </div>
 
-    <div style="border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;">
-      <div style="font-weight:900;margin-bottom:6px;">LAN do cliente</div>
-      <div style="display:grid;gap:4px;">
-        ${(data.lanClients?data.lanClients.map(x=>`<div style="display:flex;justify-content:space-between;gap:12px"><b>${x.port}</b><span>${x.count} disp</span></div>`).join(''):'<span style="color:#666">não encontrado</span>')}
-      </div>
-    </div>
-
     <div style="display:flex;justify-content:flex-end;gap:8px;">
       <button id="__tweak_copy__" style="padding:8px 10px;border:0;border-radius:10px;background:#111;color:#fff;cursor:pointer;font-weight:900;">Copiar texto</button>
     </div>
@@ -342,15 +284,19 @@ const modal=(data)=>{
   (document.documentElement||document.body).appendChild(w);
   document.getElementById('__tweak_close__').onclick=()=>w.remove();
   w.addEventListener('click',e=>{if(e.target===w)w.remove();});
+
   document.getElementById('__tweak_copy__').onclick=async()=>{
-    try{await navigator.clipboard.writeText(report);alert('Texto copiado.')}
-    catch(e){prompt('Copie o texto:',report)}
+    try{
+      await navigator.clipboard.writeText(report);
+    }catch(e){
+      alert('Falha ao copiar para a área de transferência.');
+    }
   };
 };
 
-const data={pon:null,lanState:null,wlan:null,lanClients:null,lanDevs:null};
+const data={pon:null,lanState:null,wlan:null,lanDevs:null};
 let phase=0,tries=0;
-let clickedLanClient=false,clickedWlanHeader=false,clickedLanDevs=false;
+let clickedWlanHeader=false,clickedLanDevs=false;
 
 const delay=ms=>setTimeout(tick,ms);
 
@@ -378,31 +324,24 @@ const tick=()=>{
   }
 
   if(phase===3){
-    if(!clickedLanClient){clickedLanClient=true;clickByText(/^Estado da LAN do cliente$/i);return delay(450)}
-    const sec=getSectionRootByHeaderText(/^Estado da LAN do cliente$/i);
-    data.lanClients=sec?parseLanClientCounts(sec.root):null;
-    phase=4;tries=0
+    if(!clickedWlanHeader){clickedWlanHeader=true;clickByText(/^Estado da WLAN do cliente$/i);return delay(450)}
+    clickExpandWlanClientsOnce();
+    phase=4;tries=0;return delay(450)
   }
 
   if(phase===4){
-    if(!clickedWlanHeader){clickedWlanHeader=true;clickByText(/^Estado da WLAN do cliente$/i);return delay(450)}
-    clickExpandWlanClientsOnce();
-    phase=5;tries=0;return delay(450)
+    data.wlan=readWlanClientsMaskedWithPerMacRssi();
+    if(!data.wlan&&tries<15)return delay(350);
+    phase=5;tries=0
   }
 
   if(phase===5){
-    data.wlan=readWlanClientsMaskedWithPerMacRssi();
-    if(!data.wlan&&tries<15)return delay(350);
+    if(!clickedLanDevs){clickedLanDevs=true;clickExpandLanDevsOnce();return delay(450)}
+    data.lanDevs=readLanDevsMacsByPort();
     phase=6;tries=0
   }
 
   if(phase===6){
-    if(!clickedLanDevs){clickedLanDevs=true;clickExpandLanDevsOnce();return delay(450)}
-    data.lanDevs=readLanDevsMacsByPort();
-    phase=7;tries=0
-  }
-
-  if(phase===7){
     clickById('mgrAndDiag')||clickByText(/^Gerência\s*&\s*Diagnóstico$/i);
     modal(data);
     return
