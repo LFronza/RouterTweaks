@@ -52,21 +52,9 @@
     return null;
   };
 
-  const clickById = id => {
-    for (const d of docs) {
-      try {
-        const esc = CSS.escape(id);
-        const a = d.querySelector(`a#${esc}, #${esc} a, li#${esc} > a, button#${esc}, #${esc} button`);
-        if (a) { a.click(); return true; }
-        const el = d.getElementById(id);
-        if (el && el.click) { el.click(); return true; }
-      } catch(e){}
-    }
-    return false;
-  };
-
-  const clickByText = rx => {
-    for (const d of docs) {
+  const clickByText = (rx, scopeDoc=null) => {
+    const pool = scopeDoc ? [scopeDoc] : docs;
+    for (const d of pool) {
       try {
         const el = [...d.querySelectorAll("a,button,li,span,div,td")]
           .find(x => rx.test(txt(x)));
@@ -78,7 +66,7 @@
 
   const wait = ms => new Promise(r=>setTimeout(r, ms));
 
-  const waitFor = async (predicate, timeoutMs=9000, intervalMs=200) => {
+  const waitFor = async (predicate, timeoutMs=11000, intervalMs=200) => {
     const start = Date.now();
     while (alive() && (Date.now()-start) < timeoutMs) {
       refreshDocs();
@@ -88,43 +76,77 @@
     return false;
   };
 
-  const expandPlusFor = async (rx, settle=120) => {
-    refreshDocs();
+  // === MENU TREE (LEFT) helpers ===
+  const getLeftMenuDoc = () => {
+    // heurística: doc que contém o menu com "+Status" ou "-Rede"
     for (const d of docs) {
       try {
-        const a = [...d.querySelectorAll("a,li,div,span")]
-          .find(x => rx.test(txt(x)));
-        if (!a) continue;
-        const t = (a.textContent || "").trim();
-        if (/^\+/.test(t)) { a.click(); await wait(settle); return true; }
+        const t = d.body ? d.body.innerText : "";
+        if (/\+Status/i.test(t) && /Rede/i.test(t)) return d;
       } catch(e){}
     }
-    return false;
+    return docs[0] || document;
   };
 
-  const clickMenuText = async (parentRx, childRx, settleMs=550) => {
-    if (parentRx) await expandPlusFor(parentRx, 150);
-    clickByText(childRx);
-    await wait(settleMs);
+  const findMenuItem = (labelRx, d) => {
+    const nodes = [...d.querySelectorAll("a,li,div,span,td")];
+    return nodes.find(n => labelRx.test(txt(n)));
   };
 
+  // garante que o item esteja expandido (se tiver +/-, ele respeita)
+  const ensureExpanded = async (labelRx, d) => {
+    const el = findMenuItem(labelRx, d);
+    if (!el) return false;
+    const t = (el.textContent || "").trim();
+    if (/^\+/.test(t)) { el.click(); await wait(180); }
+    return true;
+  };
+
+  // clique de menu "forçado": primeiro expande o pai, depois clica no filho.
+  // também tenta clicar o "li pai" se o item for um span/td.
+  const menuPath = async (steps) => {
+    refreshDocs();
+    const d = getLeftMenuDoc();
+
+    // 1) expandir/clicar em sequência com delays curtinhos
+    for (let i=0;i<steps.length;i++){
+      const rx = steps[i];
+      const el = findMenuItem(rx, d);
+      if (!el) continue;
+
+      const t = (el.textContent || "").trim();
+      if (i < steps.length-1) {
+        if (/^\+/.test(t)) { el.click(); await wait(220); continue; }
+        // se já está "-", não precisa clicar (mas clicar às vezes recolhe), então só garante
+        await wait(120);
+      } else {
+        el.click();
+        await wait(700);
+      }
+    }
+
+    // 2) fallback: tenta por texto em qualquer doc (caso menu esteja em outro frame)
+    for (const rx of steps) {
+      if (!clickByText(rx)) {}
+      await wait(250);
+    }
+
+    return true;
+  };
+
+  // === DATA READERS ===
   const readPonOld = () => {
     const el = findElById("Fnt_RxPower");
     if (el) {
       const v = num(el.getAttribute("title") || txt(el));
       if (validPon(v)) return v;
     }
-
     for (const d of docs) {
       try {
         const tds = [...d.querySelectorAll("td")];
         for (let i=0;i<tds.length;i++){
           const k = txt(tds[i]).toLowerCase();
-          if (k.includes("energia") && k.includes("entrada") && k.includes("módulo")) {
-            const v = num(txt(tds[i+1] || ""));
-            if (validPon(v)) return v;
-          }
-          if (k.includes("potência") && k.includes("entrada") && k.includes("óptico")) {
+          if ((k.includes("energia") || k.includes("pot")) && k.includes("entrada") && k.includes("módulo")) {
             const v = num(txt(tds[i+1] || ""));
             if (validPon(v)) return v;
           }
@@ -181,48 +203,73 @@
     return Object.keys(out).length ? out : null;
   };
 
-  const parseDhcpTable = () => {
+  // acha a tabela de "Endereço Alocado" mesmo que o ID Dhcp_Table não exista
+  const findAllocatedTable = () => {
     for (const d of docs) {
-      const t = d.getElementById("Dhcp_Table") || d.querySelector("#Dhcp_Table");
-      if (!t) continue;
+      try {
+        // 1) ID padrão
+        const byId = d.getElementById("Dhcp_Table") || d.querySelector("#Dhcp_Table");
+        if (byId) return byId;
 
-      const rows = [...t.querySelectorAll("tr")];
-      if (rows.length < 2) return { byPort: {}, list: [] };
+        // 2) procurar header "Endereço Alocado" e pegar o próximo table
+        const nodes = [...d.querySelectorAll("div,td,span,b,strong")];
+        const hdr = nodes.find(n => /Endere(ç|c)o\s+Alocado/i.test(txt(n)));
+        if (hdr) {
+          const t = hdr.closest("table") || hdr.parentElement?.querySelector("table") || d.querySelector("table");
+          if (t) return t;
+        }
 
-      const head = [...rows[0].querySelectorAll("th,td")].map(c=>txt(c).toLowerCase());
-      const idx = (rx) => head.findIndex(h => rx.test(h));
-
-      const iMac = idx(/mac/);
-      const iIp  = idx(/\bip\b/);
-      const iHost= idx(/host|anfitri|nome/);
-      const iPort= idx(/porta|port/);
-
-      const list = [];
-      for (let i=1;i<rows.length;i++){
-        const cols = [...rows[i].querySelectorAll("td")].map(c=>txt(c));
-        if (!cols.length) continue;
-        const mac = cols[iMac] || "";
-        const ip  = cols[iIp]  || "";
-        const host= cols[iHost]|| "";
-        const port= cols[iPort]|| "";
-        const macM = maskMac(mac);
-        const ipM  = maskIpLast(ip);
-        list.push({ mac, ip, host, port, macM, ipM });
-      }
-
-      const byPort = {};
-      for (const r of list) {
-        const p = (r.port||"").toUpperCase().replace(/\s+/g,"");
-        if (!p) continue;
-        byPort[p] = byPort[p] || { count:0, macs:[], ips:[], macSet:new Set(), ipSet:new Set() };
-        byPort[p].count++;
-        if (r.macM && !byPort[p].macSet.has(r.macM)) { byPort[p].macSet.add(r.macM); byPort[p].macs.push(r.macM); }
-        if (r.ipM && !byPort[p].ipSet.has(r.ipM)) { byPort[p].ipSet.add(r.ipM); byPort[p].ips.push(r.ipM); }
-      }
-      Object.values(byPort).forEach(x=>{ delete x.macSet; delete x.ipSet; });
-      return { byPort, list };
+        // 3) procurar tabela com colunas MAC/IP/Porta
+        const tables = [...d.querySelectorAll("table")];
+        for (const t of tables) {
+          const head = [...(t.querySelectorAll("tr")[0]?.querySelectorAll("th,td")||[])].map(c=>txt(c).toLowerCase());
+          const has = (rx)=>head.some(h=>rx.test(h));
+          if (has(/mac/) && has(/\bip\b/) && has(/porta|port/)) return t;
+        }
+      } catch(e){}
     }
     return null;
+  };
+
+  const parseDhcpTable = () => {
+    const t = findAllocatedTable();
+    if (!t) return null;
+
+    const rows = [...t.querySelectorAll("tr")];
+    if (rows.length < 2) return { byPort: {}, list: [] };
+
+    const head = [...rows[0].querySelectorAll("th,td")].map(c=>txt(c).toLowerCase());
+    const idx = (rx) => head.findIndex(h => rx.test(h));
+
+    const iMac = idx(/mac/);
+    const iIp  = idx(/\bip\b/);
+    const iHost= idx(/host|anfitri|nome/);
+    const iPort= idx(/porta|port/);
+
+    const list = [];
+    for (let i=1;i<rows.length;i++){
+      const cols = [...rows[i].querySelectorAll("td")].map(c=>txt(c));
+      if (!cols.length) continue;
+      const mac = cols[iMac] || "";
+      const ip  = cols[iIp]  || "";
+      const host= cols[iHost]|| "";
+      const port= cols[iPort]|| "";
+      const macM = maskMac(mac);
+      const ipM  = maskIpLast(ip);
+      list.push({ mac, ip, host, port, macM, ipM });
+    }
+
+    const byPort = {};
+    for (const r of list) {
+      const p = (r.port||"").toUpperCase().replace(/\s+/g,"");
+      if (!p) continue;
+      byPort[p] = byPort[p] || { count:0, macs:[], ips:[], macSet:new Set(), ipSet:new Set() };
+      byPort[p].count++;
+      if (r.macM && !byPort[p].macSet.has(r.macM)) { byPort[p].macSet.add(r.macM); byPort[p].macs.push(r.macM); }
+      if (r.ipM && !byPort[p].ipSet.has(r.ipM)) { byPort[p].ipSet.add(r.ipM); byPort[p].ips.push(r.ipM); }
+    }
+    Object.values(byPort).forEach(x=>{ delete x.macSet; delete x.ipSet; });
+    return { byPort, list };
   };
 
   const isLanUp = s => {
@@ -391,33 +438,30 @@
     const data = { pon:null, lan:null, dhcp:null };
     refreshDocs();
 
-    // PON: ir pelo menu (mais confiável nesse firmware)
-    await clickMenuText(null, /^\+?\-?\s*Interface\s+de\s+rede$/i, 550);
-    await clickMenuText(/^\+?\-?\s*Interface\s+de\s+rede$/i, /^Informa(ç|c)ão\s+PON$/i, 750);
-    await waitFor(()=>hasPonPage(), 9000, 250);
+    // PON
+    await menuPath([/^\+?\-?\s*Interface\s+de\s+rede$/i, /^Informa(ç|c)ão\s+PON$/i]);
+    await waitFor(()=>hasPonPage(), 12000, 250);
     data.pon = readPonOld();
 
-    // LAN: Interface de usuário > Ethernet
-    await clickMenuText(null, /^\+?\-?\s*Interface\s+de\s+usu(á|a)rio$/i, 550);
-    await clickMenuText(/^\+?\-?\s*Interface\s+de\s+usu(á|a)rio$/i, /^Ethernet$/i, 750);
-    await waitFor(()=>hasLanPage(), 9000, 250);
-    refreshDocs();
+    // LAN
+    await menuPath([/^\+?\-?\s*Interface\s+de\s+usu(á|a)rio$/i, /^Ethernet$/i]);
+    await waitFor(()=>hasLanPage(), 12000, 250);
     data.lan = readLanTableOld();
 
-    // DHCP: Rede > LAN > Servidor DHCP (ou Interface de rede > LAN > Servidor DHCP)
-    // tenta ambos, e espera a tabela aparecer
-    await clickMenuText(null, /^-?\s*Rede$/i, 550);
-    await clickMenuText(/^-?\s*Rede$/i, /^-?\s*LAN$/i, 550);
-    await clickMenuText(/^-?\s*LAN$/i, /^Servidor\s+DHCP$/i, 850);
+    // DHCP (o que você pediu: Interface de rede -> Rede -> LAN -> Servidor DHCP)
+    // aqui a ideia é: garantir "Rede" expandido e clicar LAN e Servidor DHCP em sequência, com delay maior.
+    await menuPath([/^-?\s*Rede$/i]);
+    await ensureExpanded(/^\+?\-?\s*Rede$/i, getLeftMenuDoc());
+    await wait(250);
 
-    if (!findElById("Dhcp_Table")) {
-      await clickMenuText(null, /^\+?\-?\s*Interface\s+de\s+rede$/i, 550);
-      await clickMenuText(/^\+?\-?\s*Interface\s+de\s+rede$/i, /^-?\s*LAN$/i, 550);
-      await clickMenuText(/^-?\s*LAN$/i, /^Servidor\s+DHCP$/i, 850);
-    }
+    await menuPath([/^-?\s*Rede$/i, /^-?\s*LAN$/i]);
+    await wait(400);
 
-    await waitFor(()=>!!findElById("Dhcp_Table"), 12000, 250);
-    refreshDocs();
+    await menuPath([/^-?\s*LAN$/i, /^Servidor\s+DHCP$/i]);
+    await wait(900);
+
+    // espera a tabela existir (por ID OU por "Endereço Alocado")
+    await waitFor(()=>!!findAllocatedTable(), 15000, 250);
     data.dhcp = parseDhcpTable();
 
     if (!alive()) return;
