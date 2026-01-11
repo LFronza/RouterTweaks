@@ -1,6 +1,12 @@
-(function () {
+(()=>{
+
+  if (window.RouterTweaks && window.RouterTweaks.__F670L_OLD_RUNNING) return;
+
+  window.RouterTweaks = window.RouterTweaks || {};
+  window.RouterTweaks.__F670L_OLD_RUNNING = true;
+
   try {
-    // Documento correto da interface antiga
+
     var DOC = null;
 
     if (
@@ -13,16 +19,15 @@
       DOC = document;
     }
 
-    // Prova de execução
     alert("Hello World - ZTE OLD");
 
     console.log(
       "[RouterTweaks OLD] Hello World executado",
-      DOC.location ? DOC.location.href : "sem location"
+      DOC.location ? DOC.location.href : ""
     );
 
   } catch (e) {
-    console.error("[RouterTweaks OLD] erro no Hello World", e);
-    alert("Erro ao executar Hello World (OLD)");
+    console.error("[RouterTweaks OLD] erro", e);
   }
+
 })();
