@@ -115,35 +115,57 @@ const clickExpandWlanClientsOnce=(()=>{let done=false;return ()=>{
   done=true; el.click(); return true
 }})();
 
-const readWlanClientsMasked=()=>{
+const readWlanClientsMaskedWithPerMacRssi=()=>{
   const groups={};
   let i=0,miss=0,any=false;
+
   for(;;){
     const essid=getVal('ESSID',i);
     const rssiS=getVal('RSSI',i);
     const ipS=getVal('IPAddress',i);
     const macS=getVal('MACAddress',i);
+    const alias=getVal('AliasName',i);
 
-    if(!essid&&!rssiS&&!ipS&&!macS){miss++; if(miss>=2)break; i++; continue}
+    if(!essid&&!rssiS&&!ipS&&!macS&&!alias){miss++; if(miss>=2)break; i++; continue}
     any=true; miss=0;
 
     const ssid=essid||'(sem SSID)';
     const rssi=num(rssiS);
+    const macM=maskMac(macS);
+    const ipM=maskIpLast(ipS);
 
-    if(!groups[ssid])groups[ssid]={count:0,sum:0,min:null,max:null,ips:[],macs:[],ipSet:new Set(),macSet:new Set()};
+    if(!groups[ssid])groups[ssid]={count:0,sum:0,min:null,max:null,ips:[],macs:[],macItems:[],ipSet:new Set(),macSet:new Set()};
+
     groups[ssid].count++;
 
-    const ipM=maskIpLast(ipS); if(ipM&&!groups[ssid].ipSet.has(ipM)){groups[ssid].ipSet.add(ipM);groups[ssid].ips.push(ipM)}
-    const macM=maskMac(macS); if(macM&&!groups[ssid].macSet.has(macM)){groups[ssid].macSet.add(macM);groups[ssid].macs.push(macM)}
+    if(ipM && !groups[ssid].ipSet.has(ipM)){
+      groups[ssid].ipSet.add(ipM);
+      groups[ssid].ips.push(ipM);
+    }
+
+    if(macM && !groups[ssid].macSet.has(macM)){
+      groups[ssid].macSet.add(macM);
+      groups[ssid].macs.push(macM);
+    }
+
+    if(macM){
+      groups[ssid].macItems.push({
+        mac: macM,
+        rssi: (rssi!==null&&isFinite(rssi)) ? Math.round(rssi*10)/10 : null
+      });
+    }
 
     if(rssi!==null&&isFinite(rssi)){
       groups[ssid].sum+=rssi;
       groups[ssid].min=groups[ssid].min===null?rssi:Math.min(groups[ssid].min,rssi);
       groups[ssid].max=groups[ssid].max===null?rssi:Math.max(groups[ssid].max,rssi);
     }
+
     i++
   }
+
   if(!any)return null;
+
   return Object.entries(groups).map(([ssid,g])=>({
     ssid,
     count:g.count,
@@ -151,7 +173,8 @@ const readWlanClientsMasked=()=>{
     max:g.max===null?null:Math.round(g.max*10)/10,
     avg:g.min===null?null:Math.round((g.sum/g.count)*10)/10,
     ips:g.ips||[],
-    macs:g.macs||[]
+    macs:g.macs||[],
+    macItems:(g.macItems||[]).slice(0,64)
   })).sort((a,b)=>b.count-a.count)
 };
 
@@ -197,8 +220,24 @@ const modal=(data)=>{
   w.id=id;
   w.style.cssText='position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;';
 
+  const wlanHtml=wlanSafe.length?wlanSafe.map(x=>{
+    const macList=(x.macItems||[]).length?`
+      <div style="margin-top:6px;font-size:12px;color:#444;display:grid;gap:3px">
+        ${(x.macItems||[]).slice(0,24).map(m=>`<div style="display:flex;justify-content:space-between;gap:10px"><span>${m.mac}</span><span>RSSI ${m.rssi===null?'N/A':m.rssi}</span></div>`).join('')}
+        ${(x.macItems||[]).length>24?`<div style="color:#666">+${(x.macItems||[]).length-24} MACs…</div>`:''}
+      </div>`:'';
+    return `
+      <div style="border:1px solid #f1f1f1;border-radius:10px;padding:10px;">
+        <div style="display:flex;justify-content:space-between;gap:12px">
+          <span style="font-weight:900">${x.ssid}</span>
+          <span>${x.count} disp • RSSI ${x.min??'N/A'}..${x.max??'N/A'}</span>
+        </div>
+        ${macList}
+      </div>`;
+  }).join(''):'<span style="color:#666">não encontrado</span>';
+
   w.innerHTML=`
-  <div style="width:min(780px,94vw);max-height:88vh;overflow:auto;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:14px;">
+  <div style="width:min(860px,94vw);max-height:88vh;overflow:auto;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:14px;">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;">
       <div style="font-weight:900;font-size:16px;">Resumo para o chamado</div>
       <button id="__tweak_close__" style="padding:6px 10px;border:1px solid #ddd;border-radius:10px;background:#fff;cursor:pointer;">Fechar</button>
@@ -225,15 +264,8 @@ const modal=(data)=>{
     </div>
 
     <div style="border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;">
-      <div style="font-weight:900;margin-bottom:6px;">WLAN do cliente</div>
-      <div style="display:grid;gap:6px;">
-        ${(wlanSafe.length?wlanSafe.map(x=>`
-          <div style="display:flex;justify-content:space-between;gap:12px">
-            <span>${x.ssid}</span>
-            <span>${x.count} disp • RSSI ${x.min??'N/A'}..${x.max??'N/A'}</span>
-          </div>
-        `).join(''):'<span style="color:#666">não encontrado</span>')}
-      </div>
+      <div style="font-weight:900;margin-bottom:6px;">WLAN do cliente (MAC + RSSI)</div>
+      <div style="display:grid;gap:10px;">${wlanHtml}</div>
     </div>
 
     <div style="border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;">
@@ -300,7 +332,7 @@ const tick=()=>{
   }
 
   if(phase===5){
-    data.wlan=readWlanClientsMasked();
+    data.wlan=readWlanClientsMaskedWithPerMacRssi();
     if(!data.wlan&&tries<15)return delay(350);
     phase=6;tries=0
   }
