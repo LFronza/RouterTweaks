@@ -548,309 +548,135 @@
       if (e.target === w) w.remove();
     });
 
-    // Copia direto pro clipboard; fallback via textarea/execCommand (sem prompt/alert)
-const rtOldCopyToClipboard = async (text) => {
+// Copia direto pro clipboard; fallback via textarea/execCommand (sem prompt/alert)
+const copyToClipboard = async (text) => {
+  const t = String(text || "").replace(/[•]/g, " - ");
+
+  // Clipboard API (quando existir)
   try {
-    const cb = (typeof navigator !== "undefined") ? navigator.clipboard : null;
-    if (cb && typeof cb.writeText === "function") {
-      await cb.writeText(text);
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      await navigator.clipboard.writeText(t);
       return true;
     }
-  } catch (e) {}
+  } catch (e) {
+    // segue fallback
+  }
 
+  // Fallback silencioso
   try {
     const ta = document.createElement("textarea");
-    ta.value = String(text || "");
+    ta.value = t;
     ta.setAttribute("readonly", "");
     ta.style.position = "fixed";
-    ta.style.top = "0";
-    ta.style.left = "0";
     ta.style.opacity = "0";
-    ta.style.pointerEvents = "none";
+    ta.style.left = "-9999px";
     document.body.appendChild(ta);
-
-    ta.focus();
     ta.select();
-
-    const ok = document.execCommand("copy");
+    document.execCommand("copy");
     ta.remove();
-    return !!ok;
+    return true;
   } catch (e) {
-    try {
-      const ta2 = document.createElement("textarea");
-      ta2.value = String(text || "");
-      ta2.style.position = "fixed";
-      ta2.style.left = "-9999px";
-      document.body.appendChild(ta2);
-      ta2.select();
-      document.execCommand("copy");
-      ta2.remove();
-    } catch (_) {}
     return false;
   }
 };
 
-const buildCopyReport = (data) => {
-  const lines = [];
-  lines.push("Resumo (ZTE OLD)");
-  lines.push(`Sinal PON: ${data.pon == null ? "N/A" : data.pon + " dBm"}`);
-  lines.push("");
+// liga botão copiar no modal
+const wireCopyButton = (reportCopy) => {
+  const btn = document.getElementById("__rt_old_copy__");
+  if (!btn) return;
 
-  if (data.lan) {
-    Object.keys(data.lan).sort().forEach((k) => {
-      const it = data.lan[k] || {};
-      const st = it.status ? norm(it.status) : "N/A";
-      const extra = [];
-      if (it.speed && it.speed !== "--") extra.push(norm(it.speed));
-      if (it.duplex && it.duplex !== "--") extra.push(norm(it.duplex));
-      // IMPORTANTE: no clipboard usar "-" ao invés de "•"
-      lines.push(`${k}: ${st}${extra.length ? " - " + extra.join(" - ") : ""}`);
-    });
-  } else {
-    lines.push("LAN: N/A");
-  }
-
-  lines.push("");
-
-  if (data.wifi && data.wifi.length) {
-    data.wifi.forEach((w) => {
-      lines.push(`${w.ssid}${w.band ? " (" + w.band + ")" : ""}: ${w.count || 0} disp`);
-    });
-  } else {
-    lines.push("Wi-Fi: N/A");
-  }
-
-  return lines.join("\n");
+  btn.onclick = async () => {
+    const ok = await copyToClipboard(reportCopy);
+    if (ok) {
+      const old = btn.textContent;
+      btn.textContent = "Copiado!";
+      setTimeout(() => (btn.textContent = old), 900);
+    }
+  };
 };
 
-const modal = (data) => {
-  const id = "__rt_old_modal__";
-  const old = document.getElementById(id);
-  if (old) old.remove();
+// ======= NAVEGAÇÃO VISUAL =======
 
-  const flags = mkFlags(data);
-  const reportCopy = buildCopyReport(data);
-  const w = document.createElement("div");
-  w.id = id;
+const goDhcpVisual = async () => {
+  clickMenu(/^\+?\s*Rede\s*$/i, "Rede");
+  await sleep(350);
 
-  w.style.cssText =
-    "position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.45);" +
-    "display:flex;align-items:center;justify-content:center;" +
-    "font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;";
+  clickMenu(/^\+?\s*LAN\s*$/i, "LAN");
+  await sleep(350);
 
-  const ponBad = data.pon != null && (data.pon > -10 || data.pon < -26);
+  clickMenu(/Servidor\s*DHCP(?!\s*\(IPv6\))/i, "Servidor DHCP");
+  await sleep(450);
 
-  const lanHtml = data.lan
-    ? '<div style="display:grid;gap:10px;">' +
-      Object.keys(data.lan)
-        .sort()
-        .map((k) => {
-          const it = data.lan[k] || {};
-          const st = norm(it.status || "não encontrado");
+  return await waitContentHas(
+    /Caminho:Rede\-LAN\-Servidor\s*DHCP|Endere[cç]o\s*Alocado|Endere[cç]o\s*MAC/i,
+    9000
+  );
+};
 
-          const meta = [];
-          if (it.speed && it.speed !== "--") meta.push(norm(it.speed));
-          if (it.duplex && it.duplex !== "--") meta.push(norm(it.duplex));
+const goPonVisual = async () => {
+  clickMenu(/Interface\s*de\s*rede/i, "Interface de rede");
+  await sleep(350);
+  clickMenu(/Inform(a|ã)ção\s*PON/i, "Informação PON");
+  await sleep(450);
+  return await waitContentHas(/Energia\s*de\s*entrada|pot[eê]ncia/i, 9000);
+};
 
-          // VISUAL pode manter " • " (não é pro clipboard)
-          const right = st + (meta.length ? " • " + meta.join(" • ") : "");
+const goEthVisual = async () => {
+  clickMenu(/Interface\s*de\s*usu(a|á)rio/i, "Interface de usuário");
+  await sleep(350);
+  clickMenu(/^Ethernet$/i, "Ethernet");
+  await sleep(450);
+  return await waitContentHas(/LAN1|Conex[aã]o\s*de\s*Rede/i, 9000);
+};
 
-          const macs = (it.macs || []).slice(0, 24);
-          const ips = (it.ips || []).slice(0, 24);
-          const extra =
-            macs.length || ips.length
-              ? '<div style="margin-top:8px;font-size:12px;color:#444;display:grid;gap:4px;">' +
-                (macs.length
-                  ? `<div><b>MACs (masc.):</b> ${macs.join(", ")}${(it.macs || []).length > macs.length ? "…" : ""}</div>`
-                  : "") +
-                (ips.length
-                  ? `<div><b>IPs (masc.):</b> ${ips.join(", ")}${(it.ips || []).length > ips.length ? "…" : ""}</div>`
-                  : "") +
-                "</div>"
-              : "";
+// ======= MAIN =======
 
-          return `<div style="border:1px solid #f1f1f1;border-radius:12px;padding:10px;">
-            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
-              <div style="font-weight:900">${k}</div>
-              <div style="color:${lanBad(right) ? "#b91c1c" : "#111"};text-align:right">${right}</div>
-            </div>${extra}</div>`;
-        })
-        .join("") +
-      "</div>"
-    : '<div style="color:#666">não encontrado</div>';
+(async () => {
+  const data = { pon: null, lan: null, wifi: [] };
 
-  const wifiHtml =
-    data.wifi && data.wifi.length
-      ? '<div style="display:grid;gap:10px;">' +
-        data.wifi
-          .map((x) => {
-            const macs = (x.macs || []).slice(0, 24);
-            const ips = (x.ips || []).slice(0, 24);
+  log("PON: navegando…");
+  await goPonVisual();
+  await sleep(250);
+  data.pon = readPonFromDoc(pickContentDoc());
+  log("PON:", data.pon);
 
-            const extra =
-              macs.length || ips.length
-                ? '<div style="margin-top:8px;font-size:12px;color:#444;display:grid;gap:4px;">' +
-                  (macs.length
-                    ? `<div><b>MACs (masc.):</b> ${macs.join(", ")}${(x.macs || []).length > macs.length ? "…" : ""}</div>`
-                    : "") +
-                  (ips.length
-                    ? `<div><b>IPs (masc.):</b> ${ips.join(", ")}${(x.ips || []).length > ips.length ? "…" : ""}</div>`
-                    : "") +
-                  "</div>"
-                : "";
+  log("LAN: navegando…");
+  await goEthVisual();
+  await sleep(250);
+  data.lan = readLanFromDoc(pickContentDoc());
+  log("LAN:", data.lan);
 
-            return `<div style="border:1px solid #f1f1f1;border-radius:12px;padding:10px;">
-              <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
-                <div style="font-weight:900;word-break:break-word">${x.ssid}${x.band ? " (" + x.band + ")" : ""}</div>
-                <div style="text-align:right">${x.count || 0} disp</div>
-              </div>${extra}</div>`;
-          })
-          .join("") +
-        "</div>"
-      : '<div style="color:#666">não encontrado</div>';
+  log("DHCP: navegando…");
+  const okDhcp = await goDhcpVisual();
+  log("DHCP page ok:", okDhcp);
 
-  w.innerHTML = `<div style="width:min(980px,94vw);max-height:88vh;overflow:auto;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:16px 16px 12px;">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 10px;">
-      <div style="font-weight:900;font-size:16px;">Resumo para o chamado (ZTE OLD)</div>
-      <button id="__rt_old_close__" style="padding:8px 10px;border:1px solid #ddd;border-radius:10px;background:#fff;cursor:pointer;">Fechar</button>
-    </div>
+  let leases = null;
+  if (okDhcp) {
+    await sleep(250);
+    leases = readDhcpLeases(pickContentDoc());
+  }
+  log("leases:", leases ? leases.length : null);
 
-    <div style="display:grid;gap:10px;">
-      ${
-        flags.length
-          ? `<div style="border:1px solid #fee2e2;background:#fff5f5;border-radius:12px;padding:12px;">
-              <div style="font-weight:800;color:#b91c1c;margin-bottom:6px;">Pontos de atenção</div>
-              <div style="display:grid;gap:4px;color:#7f1d1d">${flags.map((f) => `<div>• ${f}</div>`).join("")}</div>
-            </div>`
-          : `<div style="border:1px solid #e5e7eb;background:#f8fafc;border-radius:12px;padding:12px;">
-              <div style="font-weight:800;margin-bottom:4px;">Pontos de atenção</div>
-              <div style="color:#555">Nada crítico detectado pelas regras básicas.</div>
-            </div>`
+  const grouped = groupDhcp(leases || []);
+  data.wifi = grouped.wifi || [];
+
+  if (data.lan && grouped.lan && grouped.lan.length) {
+    grouped.lan.forEach((x) => {
+      if (!data.lan[x.lan]) {
+        data.lan[x.lan] = { status: null, speed: null, duplex: null, macs: [], ips: [] };
       }
+      data.lan[x.lan].macs = x.macs || [];
+      data.lan[x.lan].ips = x.ips || [];
+    });
+  }
 
-      <div style="border:1px solid #eee;border-radius:12px;padding:12px;text-align:center;">
-        <div style="font-weight:900;font-size:15px;margin-bottom:6px;">Leitura PON</div>
-        <div style="font-size:14px;"><b>Sinal PON:</b> ${
-          data.pon == null
-            ? `<span style="color:#666">não encontrado</span>`
-            : `<b style="color:${ponBad ? "#b91c1c" : "#111"}">${data.pon} dBm</b>`
-        }</div>
-      </div>
+  modal(data);
 
-      <div style="border:1px solid #eee;border-radius:12px;padding:12px;">
-        <div style="font-weight:900;text-align:center;margin-bottom:10px;">LAN (Status + velocidade + duplex + MAC/IP mascarados via DHCP)</div>
-        ${lanHtml}
-        <div style="margin-top:8px;font-size:12px;color:#555;text-align:center;">Obs: linkdown/Marque abaixo = sem link (não é problema se não tiver nada conectado).</div>
-      </div>
+})().catch((e) => {
+  alert("RouterTweaks OLD falhou:\n" + (e && e.message ? e.message : e));
+});
 
-      <div style="border:1px solid #eee;border-radius:12px;padding:12px;">
-        <div style="font-weight:900;text-align:center;margin-bottom:10px;">Wi-Fi (DHCP por SSID + MAC/IP mascarados)</div>
-        ${wifiHtml}
-      </div>
-    </div>
-
-    <div style="margin-top:10px;display:flex;justify-content:flex-end;gap:8px;">
-      <button id="__rt_old_copy__" style="padding:8px 10px;border:0;border-radius:10px;background:#111;color:#fff;cursor:pointer;font-weight:900;">Copiar texto</button>
-    </div>
-  </div>`;
-
-  (document.documentElement || document.body).appendChild(w);
-
-  document.getElementById("__rt_old_close__").onclick = () => w.remove();
-  w.addEventListener("click", (e) => {
-    if (e.target === w) w.remove();
-  });
-
-  // IMPORTANTE: não tocar em navigator.clipboard.writeText direto aqui
-  document.getElementById("__rt_old_copy__").onclick = () => {
-    rtOldCopyToClipboard(reportCopy);
-  };
-};
-  // ======= NAVEGAÇÃO VISUAL =======
-
-  const goDhcpVisual = async () => {
-    // abre/expande Rede
-    clickMenu(/^\+?\s*Rede\s*$/i, "Rede (toggle)");
-    await sleep(350);
-    clickMenu(/^\+\s*Rede\s*$/i, "Rede (+) expand");
-    await sleep(350);
-    clickMenu(/^\-\s*Rede\s*$/i, "Rede (-) já expandido");
-    await sleep(350);
-
-    // abre/expande LAN dentro de Rede
-    let okLan = clickMenu(/^\-\s*LAN\s*$/i, "-LAN (grupo)");
-    if (!okLan) okLan = clickMenu(/^\+?\s*LAN\s*$/i, "LAN (item/grupo)");
-    await sleep(450);
-
-    // Servidor DHCP (IPv4)
-    clickMenu(/Servidor\s*DHCP(?!\s*\(IPv6\))/i, "Servidor DHCP");
-    await sleep(450);
-
-    const hasDhcp = await waitContentHas(
-      /Caminho:Rede\-LAN\-Servidor\s*DHCP|Endere[cç]o\s*Alocado|Endere[cç]o\s*MAC|Dhcp_Table/i,
-      9000
-    );
-    return hasDhcp;
-  };
-
-  const goPonVisual = async () => {
-    clickMenu(/Interface\s*de\s*rede/i, "Interface de rede");
-    await sleep(350);
-    clickMenu(/Inform(a|ã)ção\s*PON/i, "Informação PON");
-    await sleep(450);
-    const ok = await waitContentHas(/Inform(a|ã)ção\s*PON|Energia\s*de\s*entrada|Pot(ê|e)ncia\s*de\s*entrada|m[oó]dulo\s*[oó]ptico/i, 9000);
-    return ok;
-  };
-
-  const goEthVisual = async () => {
-    clickMenu(/Interface\s*de\s*usu(a|á)rio/i, "Interface de usuário");
-    await sleep(350);
-    clickMenu(/^Ethernet$/i, "Ethernet");
-    await sleep(450);
-    const ok = await waitContentHas(/Interface\s*de\s*usu(a|á)rio\-Ethernet|Conex(a|ã)o\s*de\s*Rede|LAN1/i, 9000);
-    return ok;
-  };
-
-  // ======= MAIN =======
-
-  (async () => {
-    const data = { pon: null, lan: null, wifi: [] };
-
-    log("PON: navegando visualmente…");
-    await goPonVisual();
-    await sleep(300);
-    data.pon = readPonFromDoc(pickContentDoc());
-    log("PON:", data.pon);
-
-    log("LAN: navegando visualmente…");
-    await goEthVisual();
-    await sleep(300);
-    data.lan = readLanFromDoc(pickContentDoc());
-    log("LAN:", data.lan);
-
-    log("DHCP: navegando visualmente…");
-    const okDhcp = await goDhcpVisual();
-    log("DHCP page ok:", okDhcp);
-
-    let leases = null;
-    if (okDhcp) {
-      await sleep(300);
-      leases = readDhcpLeases(pickContentDoc());
-    }
-    log("leases:", leases ? leases.length : null);
-
-    const grouped = groupDhcp(leases || []);
-    data.wifi = grouped.wifi || [];
-
-    if (data.lan && grouped.lan && grouped.lan.length) {
-      grouped.lan.forEach((x) => {
-        if (!data.lan[x.lan]) data.lan[x.lan] = { status: null, speed: null, duplex: null, macs: [], ips: [] };
-        data.lan[x.lan].macs = x.macs || [];
-        data.lan[x.lan].ips = x.ips || [];
-      });
-    }
-
-    modal(data);
-  })().catch((e) => {
-    alert("RouterTweaks OLD falhou:\n" + (e && e.message ? e.message : e));
-  });
+} catch (e) {
+  alert("RouterTweaks OLD falhou:\n" + (e && e.message ? e.message : e));
+}
+})();
