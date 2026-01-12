@@ -178,44 +178,52 @@
     };
 
     const findDhcpTable = (d) => {
-      if (!d) return null;
-      const tables = d.querySelectorAll("table");
-      for (const tb of tables) {
-        const th = tb.querySelectorAll("th");
-        if (!th || !th.length) continue;
-        const header = Array.from(th).map(x => txt(x).toLowerCase()).join(" | ");
-        if ((header.includes("endereço mac") || header.includes("mac address")) && (header.includes("porta") || header.includes("port"))) return tb;
-      }
-      for (const tb of tables) {
-        const s = txt(tb).toLowerCase();
-        if ((s.includes("endereço alocado") || s.includes("allocated")) && (s.includes("endereço mac") || s.includes("mac address"))) return tb;
-      }
-      return null;
-    };
+  if (!d) return null;
+  const byId = d.getElementById("Dhcp_Table");
+  if (byId) return byId;
+  const tables = d.querySelectorAll("table");
+  for (const tb of tables) {
+    const th = tb.querySelectorAll("th, td");
+    if (!th || !th.length) continue;
+    const header = Array.from(th).slice(0, 8).map(x => txt(x).toLowerCase()).join(" | ");
+    if ((header.includes("endereço mac") || header.includes("mac address")) && (header.includes("porta") || header.includes("port"))) return tb;
+  }
+  return null;
+};
 
-    const readDhcpLeases = (d) => {
-      const tb = findDhcpTable(d);
-      if (!tb) return null;
-      const rows = tb.querySelectorAll("tr");
-      if (!rows || rows.length < 2) return null;
+const readDhcpLeases = (d) => {
+  const tb = findDhcpTable(d);
+  if (!tb) return null;
 
-      const out = [];
-      for (let i = 1; i < rows.length; i++) {
-        const cells = rows[i].querySelectorAll("td");
-        if (!cells || cells.length < 2) continue;
-        const mac = norm(txt(cells[0]));
-        const ip = norm(txt(cells[1]));
-        const host = cells.length >= 4 ? norm(txt(cells[3])) : "";
-        const port = cells.length >= 5 ? norm(txt(cells[4])) : "";
-        const macM = maskMac(mac);
-        const ipM = maskIpLast(ip);
-        const portNorm = (port || "").toUpperCase().replace(/\s+/g, "");
-        if (!macM && !ipM && !portNorm) continue;
-        out.push({ macMasked: macM, ipMasked: ipM, host, port, portNorm, band: bandOfSsid(portNorm) });
-      }
-      return out.length ? out : null;
-    };
+  const rows = Array.from(tb.querySelectorAll("tr"));
+  if (rows.length < 2) return null;
 
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const tds = Array.from(rows[i].querySelectorAll("td"));
+    if (tds.length < 2) continue;
+
+    const mac = norm(txt(tds[0]));
+    const ip = norm(txt(tds[1]));
+
+    let host = "";
+    if (tds.length >= 4) {
+      const inp = tds[3].querySelector("input");
+      host = norm(inp ? (inp.value || "") : txt(tds[3]));
+    }
+
+    const port = tds.length >= 5 ? norm(txt(tds[4])) : "";
+    const portNorm = (port || "").toUpperCase().replace(/\s+/g, "");
+
+    const macM = maskMac(mac);
+    const ipM = maskIpLast(ip);
+
+    if (!macM && !ipM && !portNorm) continue;
+    out.push({ macMasked: macM, ipMasked: ipM, host, port, portNorm, band: bandOfSsid(portNorm) });
+  }
+
+  return out.length ? out : null;
+};
     const groupDhcp = (leases) => {
       const byLan = {};
       const bySsid = {};
