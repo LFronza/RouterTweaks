@@ -854,4 +854,3 @@ const modal = (data) => {
   })().catch((e) => {
     alert("RouterTweaks OLD falhou:\n" + (e && e.message ? e.message : e));
   });
-})();
