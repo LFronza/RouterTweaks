@@ -549,21 +549,39 @@
     });
 
     // Copia direto pro clipboard; fallback via textarea/execCommand (sem prompt/alert)
-    document.getElementById("__rt_old_copy__").onclick = () => {
-      navigator.clipboard.writeText(reportCopy).catch(() => {
-        const ta = document.createElement("textarea");
-        ta.value = reportCopy;
-        ta.style.position = "fixed";
-        ta.style.left = "-9999px";
-        document.body.appendChild(ta);
-        ta.select();
-        try {
-          document.execCommand("copy");
-        } catch (_) {}
-        ta.remove();
-      });
-    };
-  };
+const copyToClipboard = (text) => {
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    return navigator.clipboard.writeText(text);
+  }
+
+  return new Promise((resolve, reject) => {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "-9999px";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+
+      ta.focus();
+      ta.select();
+
+      const ok = document.execCommand("copy");
+      ta.remove();
+
+      if (ok) resolve();
+      else reject(new Error("execCommand(copy) retornou false"));
+    } catch (e) {
+      reject(e);
+    }
+  });
+};
+
+document.getElementById("__rt_old_copy__").onclick = () => {
+  copyToClipboard(reportCopy).catch(() => {});
+};
+
 
   // ======= NAVEGAÇÃO VISUAL =======
 
