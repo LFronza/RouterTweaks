@@ -270,7 +270,7 @@ const readDhcpLeases = (d) => {
       if (data.lan) {
         Object.keys(data.lan).sort().forEach((k) => {
           const it = data.lan[k] || {};
-          const line = [it.status || "", it.speed || "", it.duplex || ""].filter(Boolean).join(" • ");
+          const line = [it.status || "", it.speed || "", it.duplex || ""].filter(Boolean).join(" - ");
           if (lanBad(line)) flags.push(`${k} link degradado: ${line}`);
         });
       }
@@ -289,7 +289,7 @@ const readDhcpLeases = (d) => {
           const extra = [];
           if (it.speed && it.speed !== "--") extra.push(norm(it.speed));
           if (it.duplex && it.duplex !== "--") extra.push(norm(it.duplex));
-          lines.push(`${k}: ${st}${extra.length ? " • " + extra.join(" • ") : ""}`);
+          lines.push(`${k}: ${st}${extra.length ? " - " + extra.join(" - ") : ""}`);
         });
       } else lines.push("LAN: N/A");
       lines.push("");
@@ -320,7 +320,7 @@ const readDhcpLeases = (d) => {
             const meta = [];
             if (it.speed && it.speed !== "--") meta.push(norm(it.speed));
             if (it.duplex && it.duplex !== "--") meta.push(norm(it.duplex));
-            const right = st + (meta.length ? " • " + meta.join(" • ") : "");
+            const right = st + (meta.length ? " - " + meta.join(" - ") : "");
             const macs = (it.macs || []).slice(0, 24);
             const ips = (it.ips || []).slice(0, 24);
             const extra = (macs.length || ips.length)
@@ -364,7 +364,7 @@ const readDhcpLeases = (d) => {
           ${flags.length
             ? `<div style="border:1px solid #fee2e2;background:#fff5f5;border-radius:12px;padding:12px;">
                 <div style="font-weight:800;color:#b91c1c;margin-bottom:6px;">Pontos de atenção</div>
-                <div style="display:grid;gap:4px;color:#7f1d1d">${flags.map(f => `<div>• ${f}</div>`).join("")}</div>
+                <div style="display:grid;gap:4px;color:#7f1d1d">${flags.map(f => `<div>- ${f}</div>`).join("")}</div>
               </div>`
             : `<div style="border:1px solid #e5e7eb;background:#f8fafc;border-radius:12px;padding:12px;">
                 <div style="font-weight:800;margin-bottom:4px;">Pontos de atenção</div>
@@ -395,11 +395,21 @@ const readDhcpLeases = (d) => {
       document.getElementById("__rt_old_close__").onclick = () => w.remove();
       w.addEventListener("click", (e) => { if (e.target === w) w.remove(); });
 
-      document.getElementById("__rt_old_copy__").onclick = async () => {
-        try { await navigator.clipboard.writeText(reportCopy); }
-        catch (e) { prompt("Copie o texto:", reportCopy); }
-      };
-    };
+     document.getElementById("__rt_old_copy__").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(reportCopy);
+  } catch (e) {
+    const ta = document.createElement("textarea");
+    ta.value = reportCopy;
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch (_) {}
+    ta.remove();
+  }
+};
+
 
     const goDhcpVisual = async () => {
       clickMenu(/^\+?\s*Rede\s*$/i, "Rede (toggle)");
