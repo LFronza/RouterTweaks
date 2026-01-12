@@ -11,12 +11,16 @@
     const norm = (s) => (s || "").toString().replace(/\s+/g, " ").trim();
     const txt = (e) => norm(e && ("innerText" in e ? e.innerText : e.textContent));
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    const num = (s) => { const m = (s || "").toString().replace(",", ".").match(/-?\d+(?:\.\d+)?/); return m ? parseFloat(m[0]) : null; };
+    const num = (s) => {
+      const m = (s || "").toString().replace(",", ".").match(/-?\d+(?:\.\d+)?/);
+      return m ? parseFloat(m[0]) : null;
+    };
 
     const maskMac = (s) => {
       const m = (s || "").match(/([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})/);
       return m ? `**:**:**:${m[4].toUpperCase()}:${m[5].toUpperCase()}:${m[6].toUpperCase()}` : null;
     };
+
     const maskIpLast = (s) => {
       const m = (s || "").match(/\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b/);
       if (!m) return null;
@@ -24,6 +28,7 @@
       if (o.some((x) => x < 0 || x > 255)) return null;
       return `*.*.*.${o[3]}`;
     };
+
     const bandOfSsid = (p) => {
       const m = (p || "").toUpperCase().match(/^SSID\s*([1-6])$/) || (p || "").toUpperCase().match(/^SSID([1-6])$/);
       if (!m) return null;
@@ -129,28 +134,26 @@
       return false;
     };
 
-   const readPonFromDoc = (d) => {
-  if (!d) return null;
+    const readPonFromDoc = (d) => {
+      if (!d) return null;
+      const rows = d.querySelectorAll("tr");
+      for (const tr of rows) {
+        const tds = tr.querySelectorAll("td");
+        if (tds.length < 2) continue;
 
-  const rows = d.querySelectorAll("tr");
-  for (const tr of rows) {
-    const tds = tr.querySelectorAll("td");
-    if (tds.length < 2) continue;
-
-    const label = txt(tds[0]).toLowerCase();
-    if (
-      label.includes("energia de entrada") ||
-      label.includes("potência de entrada") ||
-      label.includes("potencia de entrada")
-    ) {
-      const raw = txt(tds[1]).replace(",", ".");
-      const m = raw.match(/-?\d+(\.\d+)?/);
-      if (m) return parseFloat(m[0]);
-    }
-  }
-  return null;
-};
-
+        const label = txt(tds[0]).toLowerCase();
+        if (
+          label.includes("energia de entrada") ||
+          label.includes("potência de entrada") ||
+          label.includes("potencia de entrada")
+        ) {
+          const raw = txt(tds[1]).replace(",", ".");
+          const m = raw.match(/-?\d+(\.\d+)?/);
+          if (m) return parseFloat(m[0]);
+        }
+      }
+      return null;
+    };
 
     const readLanFromDoc = (d) => {
       if (!d) return null;
@@ -178,52 +181,53 @@
     };
 
     const findDhcpTable = (d) => {
-  if (!d) return null;
-  const byId = d.getElementById("Dhcp_Table");
-  if (byId) return byId;
-  const tables = d.querySelectorAll("table");
-  for (const tb of tables) {
-    const th = tb.querySelectorAll("th, td");
-    if (!th || !th.length) continue;
-    const header = Array.from(th).slice(0, 8).map(x => txt(x).toLowerCase()).join(" | ");
-    if ((header.includes("endereço mac") || header.includes("mac address")) && (header.includes("porta") || header.includes("port"))) return tb;
-  }
-  return null;
-};
+      if (!d) return null;
+      const byId = d.getElementById("Dhcp_Table");
+      if (byId) return byId;
+      const tables = d.querySelectorAll("table");
+      for (const tb of tables) {
+        const th = tb.querySelectorAll("th, td");
+        if (!th || !th.length) continue;
+        const header = Array.from(th).slice(0, 8).map(x => txt(x).toLowerCase()).join(" | ");
+        if ((header.includes("endereço mac") || header.includes("mac address")) && (header.includes("porta") || header.includes("port"))) return tb;
+      }
+      return null;
+    };
 
-const readDhcpLeases = (d) => {
-  const tb = findDhcpTable(d);
-  if (!tb) return null;
+    const readDhcpLeases = (d) => {
+      const tb = findDhcpTable(d);
+      if (!tb) return null;
 
-  const rows = Array.from(tb.querySelectorAll("tr"));
-  if (rows.length < 2) return null;
+      const rows = Array.from(tb.querySelectorAll("tr"));
+      if (rows.length < 2) return null;
 
-  const out = [];
-  for (let i = 1; i < rows.length; i++) {
-    const tds = Array.from(rows[i].querySelectorAll("td"));
-    if (tds.length < 2) continue;
+      const out = [];
+      for (let i = 1; i < rows.length; i++) {
+        const tds = Array.from(rows[i].querySelectorAll("td"));
+        if (tds.length < 2) continue;
 
-    const mac = norm(txt(tds[0]));
-    const ip = norm(txt(tds[1]));
+        const mac = norm(txt(tds[0]));
+        const ip = norm(txt(tds[1]));
 
-    let host = "";
-    if (tds.length >= 4) {
-      const inp = tds[3].querySelector("input");
-      host = norm(inp ? (inp.value || "") : txt(tds[3]));
-    }
+        let host = "";
+        if (tds.length >= 4) {
+          const inp = tds[3].querySelector("input");
+          host = norm(inp ? (inp.value || "") : txt(tds[3]));
+        }
 
-    const port = tds.length >= 5 ? norm(txt(tds[4])) : "";
-    const portNorm = (port || "").toUpperCase().replace(/\s+/g, "");
+        const port = tds.length >= 5 ? norm(txt(tds[4])) : "";
+        const portNorm = (port || "").toUpperCase().replace(/\s+/g, "");
 
-    const macM = maskMac(mac);
-    const ipM = maskIpLast(ip);
+        const macM = maskMac(mac);
+        const ipM = maskIpLast(ip);
 
-    if (!macM && !ipM && !portNorm) continue;
-    out.push({ macMasked: macM, ipMasked: ipM, host, port, portNorm, band: bandOfSsid(portNorm) });
-  }
+        if (!macM && !ipM && !portNorm) continue;
+        out.push({ macMasked: macM, ipMasked: ipM, host, port, portNorm, band: bandOfSsid(portNorm) });
+      }
 
-  return out.length ? out : null;
-};
+      return out.length ? out : null;
+    };
+
     const groupDhcp = (leases) => {
       const byLan = {};
       const bySsid = {};
@@ -299,6 +303,7 @@ const readDhcpLeases = (d) => {
       return lines.join("\n");
     };
 
+    // ✅ FECHADA CORRETAMENTE AGORA
     const modal = (data) => {
       const id = "__rt_old_modal__";
       const old = document.getElementById(id);
@@ -395,21 +400,23 @@ const readDhcpLeases = (d) => {
       document.getElementById("__rt_old_close__").onclick = () => w.remove();
       w.addEventListener("click", (e) => { if (e.target === w) w.remove(); });
 
-     document.getElementById("__rt_old_copy__").onclick = async () => {
-  try {
-    await navigator.clipboard.writeText(reportCopy);
-  } catch (e) {
-    const ta = document.createElement("textarea");
-    ta.value = reportCopy;
-    ta.style.position = "fixed";
-    ta.style.left = "-9999px";
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand("copy"); } catch (_) {}
-    ta.remove();
-  }
-};
+      document.getElementById("__rt_old_copy__").onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(reportCopy);
+        } catch (e) {
+          const ta = document.createElement("textarea");
+          ta.value = reportCopy;
+          ta.style.position = "fixed";
+          ta.style.left = "-9999px";
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand("copy"); } catch (_) {}
+          ta.remove();
+        }
+      };
+    }; // ✅ agora fechou o modal()
 
+    // ======= NAVEGAÇÃO (fora do modal) =======
 
     const goDhcpVisual = async () => {
       clickMenu(/^\+?\s*Rede\s*$/i, "Rede (toggle)");
@@ -447,6 +454,8 @@ const readDhcpLeases = (d) => {
       const ok = await waitContentHas(/Interface\s*de\s*usu(a|á)rio\-Ethernet|Conex(a|ã)o\s*de\s*Rede|LAN1/i, 9000);
       return ok;
     };
+
+    // ======= MAIN =======
 
     (async () => {
       const data = { pon: null, lan: null, wifi: [] };
@@ -489,6 +498,7 @@ const readDhcpLeases = (d) => {
     })().catch((e) => {
       alert("RouterTweaks OLD falhou:\n" + (e && e.message ? e.message : e));
     });
+
   } catch (e) {
     alert("RouterTweaks OLD falhou:\n" + (e && e.message ? e.message : e));
   }
