@@ -4,410 +4,187 @@
     window.RouterTweaks = window.RouterTweaks || {};
     window.RouterTweaks.__F670L_OLD_RUNNING = true;
 
-    var norm = function (s) { return (s || "").toString().replace(/\s+/g, " ").trim(); };
-    var txt = function (e) { return norm(e && ("innerText" in e ? e.innerText : e.textContent)); };
-    var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
-    var num = function (s) { var m = (s || "").toString().replace(",", ".").match(/-?\d+(?:\.\d+)?/); return m ? parseFloat(m[0]) : null; };
+    const RUN = Date.now().toString(36) + "_" + Math.random().toString(16).slice(2);
+    const log = (...a) => console.log(`[RT-OLD][${RUN}]`, ...a);
+    const warn = (...a) => console.warn(`[RT-OLD][${RUN}]`, ...a);
+    const norm = (s) => (s || "").toString().replace(/\s+/g, " ").trim();
+    const txt = (e) => norm(e && ("innerText" in e ? e.innerText : e.textContent));
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    var maskMac = function (s) {
-      var m = (s || "").match(/([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})[:\-]([0-9a-fA-F]{2})/);
-      return m ? ("**:**:**:" + m[4].toUpperCase() + ":" + m[5].toUpperCase() + ":" + m[6].toUpperCase()) : null;
-    };
-    var maskIpLast = function (s) {
-      var m = (s || "").match(/\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b/);
-      if (!m) return null;
-      var o = [+m[1], +m[2], +m[3], +m[4]];
-      if (o.some(function (x) { return x < 0 || x > 255; })) return null;
-      return "*.*.*." + o[3];
-    };
-    var bandOfSsidPort = function (p) {
-      var m = (p || "").toUpperCase().match(/^SSID\s*([1-6])$/) || (p || "").toUpperCase().match(/^SSID([1-6])$/);
-      if (!m) return null;
-      var n = parseInt(m[1], 10);
-      return n >= 1 && n <= 3 ? "2.4G" : "5G";
-    };
-
-    var getMainWin = function () {
-      try { if (window.top && window.top.frames && window.top.frames.length) return window.top; } catch (e) {}
-      try { return window.top || window; } catch (e) { return window; }
-    };
-
-    var getMainContentDoc = function () {
-      var topw = getMainWin();
+    const getFrames = () => {
+      const out = [];
       try {
-        if (topw && topw.frames && topw.frames.length) {
-          for (var i = 0; i < topw.frames.length; i++) {
+        const t = window.top || window;
+        if (t && t.frames && t.frames.length) {
+          for (let i = 0; i < t.frames.length; i++) {
             try {
-              var d = topw.frames[i].document;
-              if (!d || !d.body) continue;
-              var t = d.body.innerText || "";
-              if (/Caminho:/i.test(t)) return d;
+              const f = t.frames[i];
+              const d = f.document;
+              if (d && d.documentElement) out.push({ i, f, d, url: String(f.location), title: d.title || "" });
             } catch (e) {}
           }
         }
       } catch (e) {}
-      try { return document; } catch (e) { return null; }
+      try { out.push({ i: -1, f: window, d: document, url: String(location), title: document.title || "" }); } catch (e) {}
+      return out;
     };
 
-    var waitForContentDoc = async function (timeoutMs) {
-      var t0 = Date.now();
+    const pickMenuDoc = () => {
+      const fr = getFrames();
+      let best = null, bestScore = -1;
+      for (const x of fr) {
+        const d = x.d;
+        let score = 0;
+        try {
+          const a = d.querySelectorAll("a").length;
+          const t = (d.body && d.body.innerText) ? d.body.innerText : "";
+          if (a > 20) score += 2;
+          if (/\+Rede|\-Rede|Status|Interface de rede|Servidor DHCP/i.test(t)) score += 3;
+          if (d.querySelector("table") && a > 10) score += 1;
+        } catch (e) {}
+        if (score > bestScore) { bestScore = score; best = x; }
+      }
+      return best ? best.d : null;
+    };
+
+    const pickContentDoc = () => {
+      const fr = getFrames();
+      let best = null, bestScore = -1;
+      for (const x of fr) {
+        const d = x.d;
+        let score = 0;
+        try {
+          const t = (d.body && d.body.innerText) ? d.body.innerText : "";
+          if (/Caminho:/i.test(t)) score += 5;
+          if (/ZTE/i.test(t)) score += 1;
+          if (d.querySelector("table") && t.length > 200) score += 1;
+        } catch (e) {}
+        if (score > bestScore) { bestScore = score; best = x; }
+      }
+      return best ? best.d : null;
+    };
+
+    const isVisible = (el) => {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    };
+
+    const clickEl = (el) => {
+      if (!el) return false;
+      try { el.scrollIntoView({ block: "center", inline: "nearest" }); } catch (e) {}
+      try { el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window })); return true; } catch (e) {}
+      try { el.click(); return true; } catch (e) {}
+      return false;
+    };
+
+    const findMenuItem = (menuDoc, rx) => {
+      if (!menuDoc) return null;
+
+      const anchors = Array.from(menuDoc.querySelectorAll("a"));
+      const exact = anchors.filter(a => isVisible(a) && rx.test(txt(a)));
+      if (exact.length) return exact[0];
+
+      // alguns firmwares colocam o texto no TD e o clique no <tr> ou <td>
+      const cells = Array.from(menuDoc.querySelectorAll("td,div,span"));
+      const hit = cells.find(e => isVisible(e) && rx.test(txt(e)) && (e.onclick || e.getAttribute("onclick")));
+      if (hit) return hit;
+
+      // fallback: qualquer elemento clicável com o texto
+      const any = Array.from(menuDoc.querySelectorAll("a,td,tr,div,span,li"))
+        .find(e => isVisible(e) && rx.test(txt(e)) && (e.tagName === "A" || e.onclick || e.getAttribute("onclick")));
+      return any || null;
+    };
+
+    const clickMenu = (rx, label) => {
+      const menuDoc = pickMenuDoc();
+      if (!menuDoc) { warn("menuDoc não encontrado"); return false; }
+      const el = findMenuItem(menuDoc, rx);
+      if (!el) { warn("clickMenu não achou:", label || rx); return false; }
+      log("clickMenu:", label || rx, "->", txt(el));
+      return clickEl(el);
+    };
+
+    const waitContentHas = async (rx, timeoutMs = 9000) => {
+      const t0 = Date.now();
       while (Date.now() - t0 < timeoutMs) {
-        var d = getMainContentDoc();
-        if (d && d.body && (d.body.innerText || "").length > 50) return d;
-        await sleep(150);
+        const cd = pickContentDoc();
+        const t = cd && cd.body ? (cd.body.innerText || "") : "";
+        if (rx.test(t)) return true;
+        await sleep(200);
       }
-      return getMainContentDoc();
-    };
-
-    var mainNavigate = function (url) {
-      var topw = getMainWin();
-      try {
-        if (topw && topw.mainFrame && topw.mainFrame.location) { topw.mainFrame.location.href = url; return true; }
-      } catch (e) {}
-      try {
-        if (topw && topw.frames && topw.frames.length) {
-          for (var i = 0; i < topw.frames.length; i++) {
-            try {
-              var f = topw.frames[i];
-              if (f && f.location && f.document && f.document.body) {
-                var t = f.document.body.innerText || "";
-                if (/Caminho:/i.test(t)) { f.location.href = url; return true; }
-              }
-            } catch (e) {}
-          }
-        }
-      } catch (e) {}
-      try { window.location.href = url; return true; } catch (e) {}
       return false;
     };
 
-    var gotoNext = async function (next) {
-      var u = "getpage.gch?pid=1002&next=" + encodeURIComponent(next) + "&_rt=" + Date.now();
-      mainNavigate(u);
-      await sleep(650);
-      return waitForContentDoc(9000);
+    const dumpMenuSample = () => {
+      const menuDoc = pickMenuDoc();
+      if (!menuDoc) { warn("dumpMenuSample: sem menuDoc"); return; }
+      const items = Array.from(menuDoc.querySelectorAll("a,td,span,div"))
+        .map(e => txt(e))
+        .filter(t => t && (t.includes("Rede") || t.includes("LAN") || t.includes("DHCP") || t.includes("Interface") || t.includes("Status")))
+        .slice(0, 80);
+      log("MENU SAMPLE:", items);
     };
 
-    var readPon = function (d) {
-      if (!d) return null;
-      var el = d.getElementById("Fnt_RxPower");
-      if (el) {
-        var v = num(el.getAttribute("value") || el.getAttribute("title") || txt(el));
-        if (v !== null && isFinite(v)) return v;
+    const run = async () => {
+      log("START");
+      dumpMenuSample();
+
+      // Sequência VISUAL para chegar no DHCP Server:
+      // 1) expandir "+Rede" (se estiver recolhido)
+      // 2) clicar "-LAN" (ou "LAN" dentro de Rede)
+      // 3) clicar "Servidor DHCP"
+      //
+      // Observação: às vezes o menu tem "+Rede" (recolhido) e depois "-Rede" (expandido).
+      // Vamos tentar ambos.
+
+      // garante que Rede está expandido
+      clickMenu(/^\+?\s*Rede\s*$/i, "Rede (toggle)");
+      await sleep(350);
+      clickMenu(/^\+\s*Rede\s*$/i, "Rede (+) expand");
+      await sleep(350);
+      clickMenu(/^\-\s*Rede\s*$/i, "Rede (-) já expandido");
+      await sleep(350);
+
+      // agora tenta LAN dentro de Rede
+      // dependendo do firmware aparece como "-LAN" (grupo) ou só "LAN"
+      let okLan = clickMenu(/^\-\s*LAN\s*$/i, "-LAN (grupo)");
+      if (!okLan) okLan = clickMenu(/^\+?\s*LAN\s*$/i, "LAN (item/grupo)");
+      await sleep(450);
+
+      // tenta Servidor DHCP
+      let okDhcp = clickMenu(/Servidor\s*DHCP/i, "Servidor DHCP");
+      await sleep(450);
+
+      // valida no conteúdo
+      // a página costuma mostrar "Caminho:Rede-LAN-Servidor DHCP" ou ter "Endereço Alocado"
+      const hasDhcp = await waitContentHas(/Servidor\s*DHCP|Endere[cç]o\s*Alocado|Endere[cç]o\s*MAC/i, 9000);
+      log("DHCP content detected:", hasDhcp);
+
+      if (!hasDhcp) {
+        warn("Não consegui confirmar DHCP no conteúdo. Vou tentar variações de clique…");
+
+        // variações comuns: em alguns menus o caminho é Rede > LAN > (Serviços) > Servidor DHCP
+        clickMenu(/^\+?\s*Rede\s*$/i, "Rede (toggle retry)");
+        await sleep(350);
+
+        clickMenu(/^\-\s*LAN\s*$/i, "-LAN retry");
+        await sleep(350);
+
+        // às vezes o item aparece como "Servidor DHCP (IPv6)" primeiro; tenta DHCP sem IPv6
+        okDhcp = clickMenu(/^Servidor\s*DHCP\s*$/i, "Servidor DHCP (exato)");
+        if (!okDhcp) okDhcp = clickMenu(/Servidor\s*DHCP(?!\s*\(IPv6\))/i, "Servidor DHCP (sem IPv6)");
+        await sleep(450);
+
+        const hasDhcp2 = await waitContentHas(/Servidor\s*DHCP|Endere[cç]o\s*Alocado|Endere[cç]o\s*MAC/i, 9000);
+        log("DHCP content detected (retry):", hasDhcp2);
       }
-      var tables = d.querySelectorAll("table");
-      for (var ti = 0; ti < tables.length; ti++) {
-        var trs = tables[ti].querySelectorAll("tr");
-        for (var ri = 0; ri < trs.length; ri++) {
-          var cells = trs[ri].querySelectorAll("td,th");
-          if (cells.length < 2) continue;
-          var left = txt(cells[0]).toLowerCase();
-          if (!/energia.*entrada|rx\s*power|pot(ê|e)ncia.*entrada/i.test(left)) continue;
-          var right = txt(cells[cells.length - 1]);
-          var v2 = num(right);
-          if (v2 !== null && isFinite(v2)) return v2;
-        }
-      }
-      return null;
+
+      log("END (debug navegação DHCP)");
     };
 
-    var readLan = function (d) {
-      if (!d) return null;
-      var out = {};
-      var tables = d.querySelectorAll("table.infor, table#TestContent, table");
-      for (var i = 0; i < tables.length; i++) {
-        var t = tables[i];
-        var all = txt(t);
-        var m = all.match(/\bLAN\s*([1-4])\b/i);
-        if (!m) continue;
-        var lan = "LAN" + m[1];
-
-        var status = null, speed = null, duplex = null;
-        var trs = t.querySelectorAll("tr");
-        for (var r = 0; r < trs.length; r++) {
-          var tds = trs[r].querySelectorAll("td,th");
-          if (tds.length < 2) continue;
-          var k = txt(tds[0]).toLowerCase();
-          var v = txt(tds[tds.length - 1]);
-          if (/status/.test(k)) status = v;
-          else if (/velocidade|speed/.test(k)) speed = v;
-          else if (/modo|duplex/.test(k)) duplex = v;
-        }
-        out[lan] = { status: status || null, speed: speed || null, duplex: duplex || null, macs: [], ips: [] };
-      }
-      return Object.keys(out).length ? out : null;
-    };
-
-    var findDhcpTable = function (d) {
-      if (!d) return null;
-      var tables = d.querySelectorAll("table");
-      for (var i = 0; i < tables.length; i++) {
-        var th = tables[i].querySelectorAll("th");
-        if (!th || !th.length) continue;
-        var header = Array.prototype.map.call(th, function (x) { return txt(x).toLowerCase(); }).join(" | ");
-        if ((header.indexOf("endereço mac") >= 0 || header.indexOf("mac address") >= 0) && (header.indexOf("porta") >= 0 || header.indexOf("port") >= 0)) return tables[i];
-      }
-      for (var j = 0; j < tables.length; j++) {
-        var s = txt(tables[j]).toLowerCase();
-        if ((s.indexOf("endereço alocado") >= 0 || s.indexOf("allocated") >= 0) && (s.indexOf("endereço mac") >= 0 || s.indexOf("mac address") >= 0)) return tables[j];
-      }
-      return null;
-    };
-
-    var readDhcpLeases = function (d) {
-      var table = findDhcpTable(d);
-      if (!table) return null;
-
-      var rows = table.querySelectorAll("tr");
-      if (!rows || rows.length < 2) return null;
-
-      var out = [];
-      for (var i = 1; i < rows.length; i++) {
-        var cells = rows[i].querySelectorAll("td");
-        if (!cells || cells.length < 2) continue;
-
-        var mac = norm(txt(cells[0]));
-        var ip = norm(txt(cells[1]));
-        var host = cells.length >= 4 ? norm(txt(cells[3])) : "";
-        var port = cells.length >= 5 ? norm(txt(cells[4])) : "";
-
-        var macM = maskMac(mac);
-        var ipM = maskIpLast(ip);
-        var portNorm = (port || "").toUpperCase().replace(/\s+/g, "");
-
-        if (!macM && !ipM && !portNorm) continue;
-
-        out.push({ macMasked: macM, ipMasked: ipM, host: host, port: port, portNorm: portNorm, band: bandOfSsidPort(portNorm) });
-      }
-      return out.length ? out : null;
-    };
-
-    var groupDhcp = function (leases) {
-      var byLan = {};
-      var bySsid = {};
-      (leases || []).forEach(function (x) {
-        var p = x.portNorm || "";
-        var mLan = p.match(/^LAN\s*([1-4])$/i) || p.match(/^LAN([1-4])$/i);
-        if (mLan) {
-          var lan = "LAN" + mLan[1];
-          byLan[lan] = byLan[lan] || { macs: [], ips: [], setM: new Set(), setI: new Set() };
-          if (x.macMasked && !byLan[lan].setM.has(x.macMasked)) { byLan[lan].setM.add(x.macMasked); byLan[lan].macs.push(x.macMasked); }
-          if (x.ipMasked && !byLan[lan].setI.has(x.ipMasked)) { byLan[lan].setI.add(x.ipMasked); byLan[lan].ips.push(x.ipMasked); }
-          return;
-        }
-        var mS = p.match(/^SSID\s*([1-6])$/i) || p.match(/^SSID([1-6])$/i);
-        if (mS) {
-          var ssid = "SSID" + mS[1];
-          bySsid[ssid] = bySsid[ssid] || { ssid: ssid, band: bandOfSsidPort(ssid) || "", count: 0, macs: [], ips: [], setM: new Set(), setI: new Set() };
-          bySsid[ssid].count++;
-          if (x.macMasked && !bySsid[ssid].setM.has(x.macMasked)) { bySsid[ssid].setM.add(x.macMasked); bySsid[ssid].macs.push(x.macMasked); }
-          if (x.ipMasked && !bySsid[ssid].setI.has(x.ipMasked)) { bySsid[ssid].setI.add(x.ipMasked); bySsid[ssid].ips.push(x.ipMasked); }
-          return;
-        }
-      });
-
-      var lanArr = Object.keys(byLan).sort().map(function (k) { return { lan: k, macs: byLan[k].macs, ips: byLan[k].ips }; });
-      var wifiArr = Object.keys(bySsid)
-        .sort(function (a, b) { return (parseInt(a.replace(/\D/g, ""), 10) || 0) - (parseInt(b.replace(/\D/g, ""), 10) || 0); })
-        .map(function (k) { return { ssid: bySsid[k].ssid, band: bySsid[k].band, count: bySsid[k].count, macs: bySsid[k].macs, ips: bySsid[k].ips }; });
-
-      return { lan: lanArr, wifi: wifiArr };
-    };
-
-    var lanBad = function (s) {
-      var t = (s || "").toLowerCase();
-      if (!t) return false;
-      if (/marque\s*abaixo|link\s*down|linkdown/.test(t)) return false;
-      if (/half/.test(t)) return true;
-      if (/\b10\b/.test(t) || /\b100\b/.test(t)) return true;
-      return false;
-    };
-
-    var mkFlags = function (data) {
-      var flags = [];
-      if (data.pon == null) flags.push("PON: não encontrado");
-      else if (data.pon > -10 || data.pon < -26) flags.push("PON fora do esperado (-26..-10): " + data.pon + " dBm");
-
-      if (data.lan) {
-        Object.keys(data.lan).sort().forEach(function (k) {
-          var it = data.lan[k] || {};
-          var line = [it.status || "", it.speed || "", it.duplex || ""].filter(Boolean).join(" • ");
-          if (lanBad(line)) flags.push(k + " link degradado: " + line);
-        });
-      }
-      return flags;
-    };
-
-    var buildCopyReport = function (data) {
-      var lines = [];
-      lines.push("ZTE OLD");
-      lines.push("PON: " + (data.pon == null ? "N/A" : data.pon + " dBm"));
-      lines.push("");
-      if (data.lan) {
-        Object.keys(data.lan).sort().forEach(function (k) {
-          var it = data.lan[k] || {};
-          var st = it.status ? norm(it.status) : "N/A";
-          var extra = [];
-          if (it.speed && it.speed !== "--") extra.push(norm(it.speed));
-          if (it.duplex && it.duplex !== "--") extra.push(norm(it.duplex));
-          lines.push(k + ": " + st + (extra.length ? " • " + extra.join(" • ") : ""));
-        });
-      } else lines.push("LAN: N/A");
-      lines.push("");
-      if (data.wifi && data.wifi.length) {
-        data.wifi.forEach(function (w) { lines.push(w.ssid + (w.band ? " (" + w.band + ")" : "") + ": " + (w.count || 0) + " disp"); });
-      } else lines.push("Wi-Fi: N/A");
-      return lines.join("\n");
-    };
-
-    var modal = function (data) {
-      var id = "__rt_old_modal__";
-      var old = document.getElementById(id);
-      if (old) old.remove();
-
-      var flags = mkFlags(data);
-      var reportCopy = buildCopyReport(data);
-      var w = document.createElement("div");
-      w.id = id;
-      w.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;";
-
-      var ponOk = data.pon != null && !(data.pon > -10 || data.pon < -26);
-
-      var lanHtml = "";
-      if (data.lan) {
-        lanHtml = '<div style="display:grid;gap:10px;">' + Object.keys(data.lan).sort().map(function (k) {
-          var it = data.lan[k] || {};
-          var st = norm(it.status || "não encontrado");
-          var meta = [];
-          if (it.speed && it.speed !== "--") meta.push(norm(it.speed));
-          if (it.duplex && it.duplex !== "--") meta.push(norm(it.duplex));
-          var right = st + (meta.length ? " • " + meta.join(" • ") : "");
-          var extra = "";
-          var macs = (it.macs || []).slice(0, 24);
-          var ips = (it.ips || []).slice(0, 24);
-          if (macs.length || ips.length) {
-            extra = '<div style="margin-top:8px;font-size:12px;color:#444;display:grid;gap:4px;">' +
-              (macs.length ? "<div><b>MACs (masc.):</b> " + macs.join(", ") + (it.macs.length > macs.length ? "…" : "") + "</div>" : "") +
-              (ips.length ? "<div><b>IPs (masc.):</b> " + ips.join(", ") + (it.ips.length > ips.length ? "…" : "") + "</div>" : "") +
-              "</div>";
-          }
-          return '<div style="border:1px solid #f1f1f1;border-radius:12px;padding:10px;">' +
-            '<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">' +
-            '<div style="font-weight:900">' + k + '</div>' +
-            '<div style="color:' + (lanBad(right) ? "#b91c1c" : "#111") + ';text-align:right">' + right + '</div>' +
-            '</div>' + extra + '</div>';
-        }).join("") + "</div>";
-      } else lanHtml = '<div style="color:#666">não encontrado</div>';
-
-      var wifiHtml = "";
-      if (data.wifi && data.wifi.length) {
-        wifiHtml = '<div style="display:grid;gap:10px;">' + data.wifi.map(function (x) {
-          var macs = (x.macs || []).slice(0, 24);
-          var ips = (x.ips || []).slice(0, 24);
-          var extra = "";
-          if (macs.length || ips.length) {
-            extra = '<div style="margin-top:8px;font-size:12px;color:#444;display:grid;gap:4px;">' +
-              (macs.length ? "<div><b>MACs (masc.):</b> " + macs.join(", ") + (x.macs.length > macs.length ? "…" : "") + "</div>" : "") +
-              (ips.length ? "<div><b>IPs (masc.):</b> " + ips.join(", ") + (x.ips.length > ips.length ? "…" : "") + "</div>" : "") +
-              "</div>";
-          }
-          return '<div style="border:1px solid #f1f1f1;border-radius:12px;padding:10px;">' +
-            '<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">' +
-            '<div style="font-weight:900;word-break:break-word">' + x.ssid + (x.band ? " (" + x.band + ")" : "") + '</div>' +
-            '<div style="color:#111;text-align:right">' + (x.count || 0) + " disp</div>" +
-            '</div>' + extra + '</div>';
-        }).join("") + "</div>";
-      } else wifiHtml = '<div style="color:#666">não encontrado</div>';
-
-      w.innerHTML =
-        '<div style="width:min(980px,94vw);max-height:88vh;overflow:auto;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:16px 16px 12px;">' +
-        '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 10px;">' +
-        '<div style="font-weight:900;font-size:16px;">Resumo para o chamado (ZTE OLD)</div>' +
-        '<button id="__rt_old_close__" style="padding:8px 10px;border:1px solid #ddd;border-radius:10px;background:#fff;cursor:pointer;">Fechar</button>' +
-        '</div>' +
-        '<div style="display:grid;gap:10px">' +
-        (flags.length
-          ? '<div style="border:1px solid #fee2e2;background:#fff5f5;border-radius:12px;padding:12px;">' +
-            '<div style="font-weight:800;color:#b91c1c;margin-bottom:6px;">Pontos de atenção</div>' +
-            '<div style="display:grid;gap:4px;color:#7f1d1d">' + flags.map(function (f) { return "<div>• " + f + "</div>"; }).join("") + "</div></div>"
-          : '<div style="border:1px solid #e5e7eb;background:#f8fafc;border-radius:12px;padding:12px;">' +
-            '<div style="font-weight:800;margin-bottom:4px;">Pontos de atenção</div><div style="color:#555">Nada crítico detectado pelas regras básicas.</div></div>') +
-        '<div style="border:1px solid #eee;border-radius:12px;padding:12px;text-align:center;">' +
-        '<div style="font-weight:900;font-size:15px;margin-bottom:6px;">Leitura PON</div>' +
-        '<div style="font-size:14px;"><b>Sinal PON:</b> ' +
-        (data.pon == null ? '<span style="color:#666">não encontrado</span>' : '<b style="color:' + (ponOk ? "#111" : "#b91c1c") + '">' + data.pon + " dBm</b>") +
-        '</div></div>' +
-        '<div style="border:1px solid #eee;border-radius:12px;padding:12px;">' +
-        '<div style="font-weight:900;text-align:center;margin-bottom:10px;">LAN (Status + velocidade + duplex + MAC/IP mascarados via DHCP)</div>' +
-        lanHtml +
-        '<div style="margin-top:8px;font-size:12px;color:#555;text-align:center;">Obs: linkdown/Marque abaixo = sem link (não é problema se não tiver nada conectado).</div>' +
-        '</div>' +
-        '<div style="border:1px solid #eee;border-radius:12px;padding:12px;">' +
-        '<div style="font-weight:900;text-align:center;margin-bottom:10px;">Wi-Fi (DHCP por SSID + MAC/IP mascarados)</div>' +
-        wifiHtml +
-        '</div>' +
-        '</div>' +
-        '<div style="margin-top:10px;display:flex;justify-content:flex-end;gap:8px;">' +
-        '<button id="__rt_old_copy__" style="padding:8px 10px;border:0;border-radius:10px;background:#111;color:#fff;cursor:pointer;font-weight:900;">Copiar texto</button>' +
-        '</div>' +
-        '</div>';
-
-      (document.documentElement || document.body).appendChild(w);
-
-      var closeBtn = document.getElementById("__rt_old_close__");
-      if (closeBtn) closeBtn.onclick = function () { w.remove(); };
-      w.addEventListener("click", function (e) { if (e.target === w) w.remove(); });
-
-      var copyBtn = document.getElementById("__rt_old_copy__");
-      if (copyBtn) {
-        copyBtn.onclick = async function () {
-          try { await navigator.clipboard.writeText(reportCopy); }
-          catch (e) { prompt("Copie o texto:", reportCopy); }
-        };
-      }
-    };
-
-    window.RouterTweaks.goto = gotoNext;
-
-    (async function () {
-      var data = { pon: null, lan: null, wifi: [] };
-
-      var dPon = await gotoNext("poninfo");
-      data.pon = readPon(dPon);
-      if (data.pon == null) {
-        var dPon2 = await gotoNext("pon_status");
-        data.pon = readPon(dPon2);
-      }
-
-      var dEth = await gotoNext("eth_status");
-      data.lan = readLan(dEth);
-      if (!data.lan) {
-        var dEth2 = await gotoNext("lan_status");
-        data.lan = readLan(dEth2);
-      }
-
-      var dDhcp = await gotoNext("dhcp_server");
-      var leases = readDhcpLeases(dDhcp);
-      if (!leases) {
-        var dDhcp2 = await gotoNext("dhcpser");
-        leases = readDhcpLeases(dDhcp2);
-      }
-      var grouped = groupDhcp(leases || []);
-      data.wifi = grouped.wifi || [];
-
-      if (data.lan && grouped.lan && grouped.lan.length) {
-        grouped.lan.forEach(function (x) {
-          if (!data.lan[x.lan]) data.lan[x.lan] = { status: null, speed: null, duplex: null, macs: [], ips: [] };
-          data.lan[x.lan].macs = x.macs || [];
-          data.lan[x.lan].ips = x.ips || [];
-        });
-      }
-
-      modal(data);
-    })().catch(function (e) {
-      alert("RouterTweaks OLD falhou:\n" + (e && e.message ? e.message : e));
-    });
+    run().catch(e => alert("RT-OLD falhou:\n" + (e && e.message ? e.message : e)));
   } catch (e) {
-    alert("RouterTweaks OLD falhou:\n" + (e && e.message ? e.message : e));
+    alert("RT-OLD falhou:\n" + (e && e.message ? e.message : e));
   }
 })();
