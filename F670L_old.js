@@ -129,28 +129,28 @@
       return false;
     };
 
-    const readPonFromDoc = (d) => {
-      if (!d) return null;
-      const el = d.getElementById("Fnt_RxPower");
-      if (el) {
-        const v = num(el.getAttribute("value") || el.getAttribute("title") || txt(el));
-        if (v !== null && isFinite(v)) return v;
-      }
-      const tables = d.querySelectorAll("table");
-      for (const tb of tables) {
-        const trs = tb.querySelectorAll("tr");
-        for (const tr of trs) {
-          const cells = tr.querySelectorAll("td,th");
-          if (cells.length < 2) continue;
-          const left = txt(cells[0]).toLowerCase();
-          if (!/energia.*entrada|rx\s*power|pot(ê|e)ncia.*entrada|potencia.*entrada/i.test(left)) continue;
-          const right = txt(cells[cells.length - 1]);
-          const v2 = num(right);
-          if (v2 !== null && isFinite(v2)) return v2;
-        }
-      }
-      return null;
-    };
+   const readPonFromDoc = (d) => {
+  if (!d) return null;
+
+  const rows = d.querySelectorAll("tr");
+  for (const tr of rows) {
+    const tds = tr.querySelectorAll("td");
+    if (tds.length < 2) continue;
+
+    const label = txt(tds[0]).toLowerCase();
+    if (
+      label.includes("energia de entrada") ||
+      label.includes("potência de entrada") ||
+      label.includes("potencia de entrada")
+    ) {
+      const raw = txt(tds[1]).replace(",", ".");
+      const m = raw.match(/-?\d+(\.\d+)?/);
+      if (m) return parseFloat(m[0]);
+    }
+  }
+  return null;
+};
+
 
     const readLanFromDoc = (d) => {
       if (!d) return null;
