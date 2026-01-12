@@ -389,7 +389,6 @@
     const buildCopyReport = (data) => {
       const lines = [];
 
-      lines.push("Resumo (ZTE OLD)");
       lines.push(`Sinal PON: ${data.pon == null ? "N/A" : data.pon + " dBm"}`);
       lines.push("");
 
@@ -493,8 +492,8 @@
               const extra =
                 macs.length || ips.length
                   ? '<div style="margin-top:8px;font-size:12px;color:#444;display:grid;gap:4px;">' +
-                    (macs.length ? `<div><b>MACs (masc.):</b> ${macs.join(", ")}${(it.macs || []).length > macs.length ? "…" : ""}</div>` : "") +
-                    (ips.length ? `<div><b>IPs (masc.):</b> ${ips.join(", ")}${(it.ips || []).length > ips.length ? "…" : ""}</div>` : "") +
+                    (macs.length ? `<div><b>MACs:</b> ${macs.join(", ")}${(it.macs || []).length > macs.length ? "…" : ""}</div>` : "") +
+                    (ips.length ? `<div><b>IPs:</b> ${ips.join(", ")}${(it.ips || []).length > ips.length ? "…" : ""}</div>` : "") +
                     "</div>"
                   : "";
 
@@ -519,8 +518,8 @@
                 const extra =
                   macs.length || ips.length
                     ? '<div style="margin-top:8px;font-size:12px;color:#444;display:grid;gap:4px;">' +
-                      (macs.length ? `<div><b>MACs (masc.):</b> ${macs.join(", ")}${(x.macs || []).length > macs.length ? "…" : ""}</div>` : "") +
-                      (ips.length ? `<div><b>IPs (masc.):</b> ${ips.join(", ")}${(x.ips || []).length > ips.length ? "…" : ""}</div>` : "") +
+                      (macs.length ? `<div><b>MACs:</b> ${macs.join(", ")}${(x.macs || []).length > macs.length ? "…" : ""}</div>` : "") +
+                      (ips.length ? `<div><b>IPs:</b> ${ips.join(", ")}${(x.ips || []).length > ips.length ? "…" : ""}</div>` : "") +
                       "</div>"
                     : "";
 
@@ -536,7 +535,7 @@
 
       w.innerHTML = `<div style="width:min(980px,94vw);max-height:88vh;overflow:auto;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:16px 16px 12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 10px;">
-          <div style="font-weight:900;font-size:16px;">Resumo para o chamado (ZTE OLD)</div>
+          <div style="font-weight:900;font-size:16px;">Resumo para o chamado</div>
           <button id="__rt_old_close__" style="padding:8px 10px;border:1px solid #ddd;border-radius:10px;background:#fff;cursor:pointer;">Fechar</button>
         </div>
 
@@ -563,13 +562,13 @@
           </div>
 
           <div style="border:1px solid #eee;border-radius:12px;padding:12px;">
-            <div style="font-weight:900;text-align:center;margin-bottom:10px;">LAN (Status + velocidade + duplex + MAC/IP mascarados via DHCP)</div>
+            <div style="font-weight:900;text-align:center;margin-bottom:10px;">LAN</div>
             ${lanHtml}
             <div style="margin-top:8px;font-size:12px;color:#555;text-align:center;">Obs: linkdown/Marque abaixo = sem link (não é problema se não tiver nada conectado).</div>
           </div>
 
           <div style="border:1px solid #eee;border-radius:12px;padding:12px;">
-            <div style="font-weight:900;text-align:center;margin-bottom:10px;">Wi-Fi (DHCP por SSID + MAC/IP mascarados)</div>
+            <div style="font-weight:900;text-align:center;margin-bottom:10px;">Wi-Fi</div>
             ${wifiHtml}
           </div>
         </div>
