@@ -247,7 +247,7 @@ const modal=(data)=>{
     `Sinal PON: ${data.pon===null?'N/A':data.pon+' dBm'}`,
     data.uptimeText?`Uptime: ${data.uptimeText}`:'Uptime: N/A',
     '',
-    ...(lanState?Object.entries(lanState).sort().map(([k,v])=>`${k}: ${v}`):['LAN (Estado): N/A']),
+    ...(lanState?Object.entries(lanState).sort().map(([k,v])=>`${k}: ${v}`):['LAN: N/A']),
     '',
     ...(wlanSafe.length?wlanSafe.map(x=>`SSID ${x.ssid}${x.band?` (${x.band})`:''}: ${x.count} disp, RSSI ${x.min??'N/A'}..${x.max??'N/A'}`):['WLAN do cliente: N/A'])
   ].join('\n');
@@ -305,13 +305,13 @@ const modal=(data)=>{
     </div>
 
     <div style="border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;">
-      <div style="font-weight:900;margin-bottom:6px;">LAN (Estado + MACs)</div>
+      <div style="font-weight:900;margin-bottom:6px;">LAN</div>
       <div style="display:grid;gap:10px;">${lanHtml}</div>
       <div style="margin-top:6px;font-size:12px;color:#555;">Obs: “Sem link” não é problema.</div>
     </div>
 
     <div style="border:1px solid #eee;border-radius:12px;padding:10px;margin-bottom:10px;">
-      <div style="font-weight:900;margin-bottom:6px;">WLAN do cliente (MAC + RSSI)</div>
+      <div style="font-weight:900;margin-bottom:6px;">WLAN do cliente</div>
       <div style="display:grid;gap:10px;">${wlanHtml}</div>
     </div>
 
