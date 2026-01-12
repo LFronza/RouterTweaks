@@ -549,40 +549,223 @@
     });
 
     // Copia direto pro clipboard; fallback via textarea/execCommand (sem prompt/alert)
-const copyToClipboard = (text) => {
-  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-    return navigator.clipboard.writeText(text);
+const rtOldCopyToClipboard = async (text) => {
+  try {
+    const cb = (typeof navigator !== "undefined") ? navigator.clipboard : null;
+    if (cb && typeof cb.writeText === "function") {
+      await cb.writeText(text);
+      return true;
+    }
+  } catch (e) {}
+
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = String(text || "");
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "0";
+    ta.style.left = "0";
+    ta.style.opacity = "0";
+    ta.style.pointerEvents = "none";
+    document.body.appendChild(ta);
+
+    ta.focus();
+    ta.select();
+
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return !!ok;
+  } catch (e) {
+    try {
+      const ta2 = document.createElement("textarea");
+      ta2.value = String(text || "");
+      ta2.style.position = "fixed";
+      ta2.style.left = "-9999px";
+      document.body.appendChild(ta2);
+      ta2.select();
+      document.execCommand("copy");
+      ta2.remove();
+    } catch (_) {}
+    return false;
+  }
+};
+
+const buildCopyReport = (data) => {
+  const lines = [];
+  lines.push("Resumo (ZTE OLD)");
+  lines.push(`Sinal PON: ${data.pon == null ? "N/A" : data.pon + " dBm"}`);
+  lines.push("");
+
+  if (data.lan) {
+    Object.keys(data.lan).sort().forEach((k) => {
+      const it = data.lan[k] || {};
+      const st = it.status ? norm(it.status) : "N/A";
+      const extra = [];
+      if (it.speed && it.speed !== "--") extra.push(norm(it.speed));
+      if (it.duplex && it.duplex !== "--") extra.push(norm(it.duplex));
+      // IMPORTANTE: no clipboard usar "-" ao invés de "•"
+      lines.push(`${k}: ${st}${extra.length ? " - " + extra.join(" - ") : ""}`);
+    });
+  } else {
+    lines.push("LAN: N/A");
   }
 
-  return new Promise((resolve, reject) => {
-    try {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.setAttribute("readonly", "");
-      ta.style.position = "fixed";
-      ta.style.top = "-9999px";
-      ta.style.left = "-9999px";
-      document.body.appendChild(ta);
+  lines.push("");
 
-      ta.focus();
-      ta.select();
+  if (data.wifi && data.wifi.length) {
+    data.wifi.forEach((w) => {
+      lines.push(`${w.ssid}${w.band ? " (" + w.band + ")" : ""}: ${w.count || 0} disp`);
+    });
+  } else {
+    lines.push("Wi-Fi: N/A");
+  }
 
-      const ok = document.execCommand("copy");
-      ta.remove();
+  return lines.join("\n");
+};
 
-      if (ok) resolve();
-      else reject(new Error("execCommand(copy) retornou false"));
-    } catch (e) {
-      reject(e);
-    }
+const modal = (data) => {
+  const id = "__rt_old_modal__";
+  const old = document.getElementById(id);
+  if (old) old.remove();
+
+  const flags = mkFlags(data);
+  const reportCopy = buildCopyReport(data);
+  const w = document.createElement("div");
+  w.id = id;
+
+  w.style.cssText =
+    "position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.45);" +
+    "display:flex;align-items:center;justify-content:center;" +
+    "font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;";
+
+  const ponBad = data.pon != null && (data.pon > -10 || data.pon < -26);
+
+  const lanHtml = data.lan
+    ? '<div style="display:grid;gap:10px;">' +
+      Object.keys(data.lan)
+        .sort()
+        .map((k) => {
+          const it = data.lan[k] || {};
+          const st = norm(it.status || "não encontrado");
+
+          const meta = [];
+          if (it.speed && it.speed !== "--") meta.push(norm(it.speed));
+          if (it.duplex && it.duplex !== "--") meta.push(norm(it.duplex));
+
+          // VISUAL pode manter " • " (não é pro clipboard)
+          const right = st + (meta.length ? " • " + meta.join(" • ") : "");
+
+          const macs = (it.macs || []).slice(0, 24);
+          const ips = (it.ips || []).slice(0, 24);
+          const extra =
+            macs.length || ips.length
+              ? '<div style="margin-top:8px;font-size:12px;color:#444;display:grid;gap:4px;">' +
+                (macs.length
+                  ? `<div><b>MACs (masc.):</b> ${macs.join(", ")}${(it.macs || []).length > macs.length ? "…" : ""}</div>`
+                  : "") +
+                (ips.length
+                  ? `<div><b>IPs (masc.):</b> ${ips.join(", ")}${(it.ips || []).length > ips.length ? "…" : ""}</div>`
+                  : "") +
+                "</div>"
+              : "";
+
+          return `<div style="border:1px solid #f1f1f1;border-radius:12px;padding:10px;">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
+              <div style="font-weight:900">${k}</div>
+              <div style="color:${lanBad(right) ? "#b91c1c" : "#111"};text-align:right">${right}</div>
+            </div>${extra}</div>`;
+        })
+        .join("") +
+      "</div>"
+    : '<div style="color:#666">não encontrado</div>';
+
+  const wifiHtml =
+    data.wifi && data.wifi.length
+      ? '<div style="display:grid;gap:10px;">' +
+        data.wifi
+          .map((x) => {
+            const macs = (x.macs || []).slice(0, 24);
+            const ips = (x.ips || []).slice(0, 24);
+
+            const extra =
+              macs.length || ips.length
+                ? '<div style="margin-top:8px;font-size:12px;color:#444;display:grid;gap:4px;">' +
+                  (macs.length
+                    ? `<div><b>MACs (masc.):</b> ${macs.join(", ")}${(x.macs || []).length > macs.length ? "…" : ""}</div>`
+                    : "") +
+                  (ips.length
+                    ? `<div><b>IPs (masc.):</b> ${ips.join(", ")}${(x.ips || []).length > ips.length ? "…" : ""}</div>`
+                    : "") +
+                  "</div>"
+                : "";
+
+            return `<div style="border:1px solid #f1f1f1;border-radius:12px;padding:10px;">
+              <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
+                <div style="font-weight:900;word-break:break-word">${x.ssid}${x.band ? " (" + x.band + ")" : ""}</div>
+                <div style="text-align:right">${x.count || 0} disp</div>
+              </div>${extra}</div>`;
+          })
+          .join("") +
+        "</div>"
+      : '<div style="color:#666">não encontrado</div>';
+
+  w.innerHTML = `<div style="width:min(980px,94vw);max-height:88vh;overflow:auto;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:16px 16px 12px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 10px;">
+      <div style="font-weight:900;font-size:16px;">Resumo para o chamado (ZTE OLD)</div>
+      <button id="__rt_old_close__" style="padding:8px 10px;border:1px solid #ddd;border-radius:10px;background:#fff;cursor:pointer;">Fechar</button>
+    </div>
+
+    <div style="display:grid;gap:10px;">
+      ${
+        flags.length
+          ? `<div style="border:1px solid #fee2e2;background:#fff5f5;border-radius:12px;padding:12px;">
+              <div style="font-weight:800;color:#b91c1c;margin-bottom:6px;">Pontos de atenção</div>
+              <div style="display:grid;gap:4px;color:#7f1d1d">${flags.map((f) => `<div>• ${f}</div>`).join("")}</div>
+            </div>`
+          : `<div style="border:1px solid #e5e7eb;background:#f8fafc;border-radius:12px;padding:12px;">
+              <div style="font-weight:800;margin-bottom:4px;">Pontos de atenção</div>
+              <div style="color:#555">Nada crítico detectado pelas regras básicas.</div>
+            </div>`
+      }
+
+      <div style="border:1px solid #eee;border-radius:12px;padding:12px;text-align:center;">
+        <div style="font-weight:900;font-size:15px;margin-bottom:6px;">Leitura PON</div>
+        <div style="font-size:14px;"><b>Sinal PON:</b> ${
+          data.pon == null
+            ? `<span style="color:#666">não encontrado</span>`
+            : `<b style="color:${ponBad ? "#b91c1c" : "#111"}">${data.pon} dBm</b>`
+        }</div>
+      </div>
+
+      <div style="border:1px solid #eee;border-radius:12px;padding:12px;">
+        <div style="font-weight:900;text-align:center;margin-bottom:10px;">LAN (Status + velocidade + duplex + MAC/IP mascarados via DHCP)</div>
+        ${lanHtml}
+        <div style="margin-top:8px;font-size:12px;color:#555;text-align:center;">Obs: linkdown/Marque abaixo = sem link (não é problema se não tiver nada conectado).</div>
+      </div>
+
+      <div style="border:1px solid #eee;border-radius:12px;padding:12px;">
+        <div style="font-weight:900;text-align:center;margin-bottom:10px;">Wi-Fi (DHCP por SSID + MAC/IP mascarados)</div>
+        ${wifiHtml}
+      </div>
+    </div>
+
+    <div style="margin-top:10px;display:flex;justify-content:flex-end;gap:8px;">
+      <button id="__rt_old_copy__" style="padding:8px 10px;border:0;border-radius:10px;background:#111;color:#fff;cursor:pointer;font-weight:900;">Copiar texto</button>
+    </div>
+  </div>`;
+
+  (document.documentElement || document.body).appendChild(w);
+
+  document.getElementById("__rt_old_close__").onclick = () => w.remove();
+  w.addEventListener("click", (e) => {
+    if (e.target === w) w.remove();
   });
+
+  // IMPORTANTE: não tocar em navigator.clipboard.writeText direto aqui
+  document.getElementById("__rt_old_copy__").onclick = () => {
+    rtOldCopyToClipboard(reportCopy);
+  };
 };
-
-document.getElementById("__rt_old_copy__").onclick = () => {
-  copyToClipboard(reportCopy).catch(() => {});
-};
-
-
   // ======= NAVEGAÇÃO VISUAL =======
 
   const goDhcpVisual = async () => {
